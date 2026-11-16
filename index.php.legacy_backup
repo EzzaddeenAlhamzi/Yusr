@@ -1,0 +1,868 @@
+<?php
+/**
+ * أصل الصفحة الرئيسية للتطبيق (Main API Entrypoint)
+ * يستدعي ملف الاتصال بقاعدة البيانات db.php
+ * ويتعامل مع جداول قاعدة البيانات yusr_application بدون أي تعديل عليها
+ */
+
+require_once 'db.php';
+
+header('Content-Type: application/json; charset=utf-8');
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With');
+
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'OPTIONS') {
+    http_response_code(200);
+    exit;
+}
+
+// قراءة بيانات الطلب (سواء JSON أو POST/GET)
+$inputJSON = file_get_contents('php://input');
+$requestData = json_decode($inputJSON, true) ?? [];
+$action = $_GET['action'] ?? $requestData['action'] ?? $_POST['action'] ?? 'ping';
+
+try {
+    switch ($action) {
+        // 1. فحص الاتصال بقاعدة البيانات
+        case 'ping':
+            echo json_encode([
+                'status' => 'success',
+                'message' => 'تم الاتصال بقاعدة البيانات yusr_application بنجاح!',
+                'database' => $dbname,
+                'charset' => $charset
+            ], JSON_UNESCAPED_UNICODE);
+            break;
+
+        // 2. تسجيل مقدم الرعاية (جدول caregivers)
+        case 'register_caregiver':
+            $name = trim($requestData['C_Name'] ?? $_POST['C_Name'] ?? '');
+            $phone = trim($requestData['C_PhonNumber'] ?? $_POST['C_PhonNumber'] ?? '');
+            $relationship = trim($requestData['C_Relationship'] ?? $_POST['C_Relationship'] ?? '');
+            $email = trim($requestData['C_Email'] ?? $_POST['C_Email'] ?? '');
+            $password = trim($requestData['C_Password'] ?? $_POST['C_Password'] ?? '');
+
+            if (empty($name) || (empty($phone) && empty($email))) {
+                http_response_code(400);
+                echo json_encode(['status' => 'error', 'message' => 'الاسم ورقم الهاتف أو البريد الإلكتروني مطلوبان'], JSON_UNESCAPED_UNICODE);
+                break;
+            }
+
+            if (!empty($phone)) {
+                $stmt = $pdo->prepare("SELECT * FROM caregivers WHERE C_PhonNumber = ?");
+                $stmt->execute([$phone]);
+                if ($stmt->fetch()) {
+                    http_response_code(409);
+                    echo json_encode(['status' => 'error', 'message' => 'رقم الهاتف مسجل بالفعل لمقدم رعاية في قاعدة البيانات'], JSON_UNESCAPED_UNICODE);
+                    break;
+                }
+            }
+
+            if (!empty($email)) {
+                $stmt = $pdo->prepare("SELECT * FROM caregivers WHERE C_Email = ?");
+                $stmt->execute([$email]);
+                if ($stmt->fetch()) {
+                    http_response_code(409);
+                    echo json_encode(['status' => 'error', 'message' => 'البريد الإلكتروني مسجل بالفعل لمقدم رعاية في قاعدة البيانات'], JSON_UNESCAPED_UNICODE);
+                    break;
+                }
+            }
+
+            $idStmt = $pdo->query("SELECT IFNULL(MAX(Caregivers_ID), 0) + 1 AS next_id FROM caregivers");
+            $nextId = (int)$idStmt->fetch()['next_id'];
+
+            // حفظ اسم المستخدم والبيانات مباشرة بدون تشفير
+            $insertStmt = $pdo->prepare("INSERT INTO caregivers (Caregivers_ID, C_Name, C_PhonNumber, C_Relationship, C_Email, C_Password) VALUES (?, ?, ?, ?, ?, ?)");
+            $insertStmt->execute([$nextId, $name, $phone, $relationship, $email, $password]);
+
+            echo json_encode([
+                'status' => 'success',
+                'message' => 'تم إنشاء حساب مقدم الرعاية بنجاح',
+                'caregiver' => [
+                    'Caregivers_ID' => $nextId,
+                    'C_Name' => $name,
+                    'C_PhonNumber' => $phone,
+                    'C_Relationship' => $relationship,
+                    'C_Email' => $email,
+                    'Eldery_ID' => null
+                ]
+            ], JSON_UNESCAPED_UNICODE);
+            break;
+
+        case 'login_caregiver':
+            $identifier = trim($requestData['C_PhonNumber'] ?? $requestData['identifier'] ?? $requestData['C_Email'] ?? $_POST['C_PhonNumber'] ?? $_POST['C_Email'] ?? '');
+            $password = trim($requestData['C_Password'] ?? $_POST['C_Password'] ?? '');
+            if (empty($identifier)) {
+                http_response_code(400);
+                echo json_encode(['status' => 'error', 'message' => 'يرجى إدخال رقم الهاتف أو البريد الإلكتروني'], JSON_UNESCAPED_UNICODE);
+                break;
+            }
+
+            $stmt = $pdo->prepare("SELECT * FROM caregivers WHERE C_PhonNumber = ? OR C_Email = ?");
+            $stmt->execute([$identifier, $identifier]);
+            $caregiver = $stmt->fetch();
+
+            if ($caregiver) {
+                echo json_encode([
+                    'status' => 'success',
+                    'message' => 'تم تسجيل الدخول بنجاح',
+                    'role' => 'caregiver',
+                    'caregiver' => $caregiver
+                ], JSON_UNESCAPED_UNICODE);
+            } else {
+                http_response_code(404);
+                echo json_encode(['status' => 'error', 'message' => 'رقم الهاتف أو البريد غير مسجل كمقدم رعاية في قاعدة البيانات'], JSON_UNESCAPED_UNICODE);
+            }
+            break;
+
+        
+        // استرجاع بيانات مقدم الرعاية
+        case 'get_caregiver':
+            $caregiverId = $requestData['Caregivers_ID'] ?? $_GET['Caregivers_ID'] ?? null;
+            if ($caregiverId) {
+                $stmt = $pdo->prepare("SELECT Caregivers_ID, C_Name, C_PhonNumber, C_Relationship, C_Email, Eldery_ID FROM caregivers WHERE Caregivers_ID = ?");
+                $stmt->execute([$caregiverId]);
+                $caregiver = $stmt->fetch();
+                if ($caregiver) {
+                    echo json_encode(['status' => 'success', 'data' => $caregiver], JSON_UNESCAPED_UNICODE);
+                } else {
+                    http_response_code(404);
+                    echo json_encode(['status' => 'error', 'message' => 'مقدم الرعاية غير مسجل'], JSON_UNESCAPED_UNICODE);
+                }
+            } else {
+                http_response_code(400);
+                echo json_encode(['status' => 'error', 'message' => 'معرف مقدم الرعاية مطلوب'], JSON_UNESCAPED_UNICODE);
+            }
+            break;
+
+        // تحديث بيانات مقدم الرعاية
+        case 'update_caregiver':
+            $caregiverId = $requestData['Caregivers_ID'] ?? $_POST['Caregivers_ID'] ?? null;
+            $name = trim($requestData['C_Name'] ?? $_POST['C_Name'] ?? '');
+            $phone = trim($requestData['C_PhonNumber'] ?? $_POST['C_PhonNumber'] ?? '');
+            $relationship = trim($requestData['C_Relationship'] ?? $_POST['C_Relationship'] ?? '');
+            $email = trim($requestData['C_Email'] ?? $_POST['C_Email'] ?? '');
+
+            if (!$caregiverId) {
+                http_response_code(400);
+                echo json_encode(['status' => 'error', 'message' => 'معرف مقدم الرعاية مطلوب'], JSON_UNESCAPED_UNICODE);
+                break;
+            }
+
+            $stmt = $pdo->prepare("UPDATE caregivers SET C_Name = ?, C_PhonNumber = ?, C_Relationship = ?, C_Email = ? WHERE Caregivers_ID = ?");
+            $stmt->execute([$name, $phone, $relationship, $email, $caregiverId]);
+
+            echo json_encode([
+                'status' => 'success',
+                'message' => 'تم تحديث بيانات مقدم الرعاية بنجاح',
+                'caregiver' => [
+                    'Caregivers_ID' => $caregiverId,
+                    'C_Name' => $name,
+                    'C_PhonNumber' => $phone,
+                    'C_Relationship' => $relationship,
+                    'C_Email' => $email
+                ]
+            ], JSON_UNESCAPED_UNICODE);
+            break;
+
+        case 'register_elderly':
+            $name = trim($requestData['E_Name'] ?? $_POST['E_Name'] ?? '');
+            $sex = trim($requestData['E_sex'] ?? $_POST['E_sex'] ?? 'ذكر');
+            $phone = trim($requestData['E_PhonNumber'] ?? $_POST['E_PhonNumber'] ?? '');
+            $email = trim($requestData['E_Email'] ?? $_POST['E_Email'] ?? '');
+            $password = trim($requestData['E_Password'] ?? $_POST['E_Password'] ?? '');
+
+            if (empty($name)) {
+                http_response_code(400);
+                echo json_encode(['status' => 'error', 'message' => 'يرجى إدخال اسم كبير السن'], JSON_UNESCAPED_UNICODE);
+                break;
+            }
+
+            if (!empty($phone)) {
+                $stmt = $pdo->prepare("SELECT * FROM elderly WHERE E_PhonNumber = ?");
+                $stmt->execute([$phone]);
+                if ($stmt->fetch()) {
+                    http_response_code(409);
+                    echo json_encode(['status' => 'error', 'message' => 'رقم الهاتف مسجل بالفعل لكبير سن في قاعدة البيانات'], JSON_UNESCAPED_UNICODE);
+                    break;
+                }
+            }
+
+            if (!empty($email)) {
+                $stmt = $pdo->prepare("SELECT * FROM elderly WHERE E_Email = ?");
+                $stmt->execute([$email]);
+                if ($stmt->fetch()) {
+                    http_response_code(409);
+                    echo json_encode(['status' => 'error', 'message' => 'البريد الإلكتروني مسجل بالفعل لكبير سن في قاعدة البيانات'], JSON_UNESCAPED_UNICODE);
+                    break;
+                }
+            }
+
+            $idStmt = $pdo->query("SELECT IFNULL(MAX(Eldery_ID), 0) + 1 AS next_id FROM elderly");
+            $nextId = (int)$idStmt->fetch()['next_id'];
+
+            // حفظ الاسم صريحاً بدون أي تشفير
+            $insertStmt = $pdo->prepare("INSERT INTO elderly (Eldery_ID, E_Name, E_sex, E_PhonNumber, E_Email, E_Password) VALUES (?, ?, ?, ?, ?, ?)");
+            $insertStmt->execute([$nextId, $name, $sex, $phone, $email, $password]);
+
+            echo json_encode([
+                'status' => 'success',
+                'message' => 'تم إنشاء حساب كبير السن بنجاح',
+                'elderly' => [
+                    'Eldery_ID' => $nextId,
+                    'E_Name' => $name,
+                    'E_sex' => $sex,
+                    'E_PhonNumber' => $phone,
+                    'E_Email' => $email
+                ]
+            ], JSON_UNESCAPED_UNICODE);
+            break;
+
+        case 'login_elderly':
+            $identifier = trim($requestData['E_PhonNumber'] ?? $requestData['identifier'] ?? $requestData['E_Email'] ?? $_POST['E_PhonNumber'] ?? $_POST['E_Email'] ?? '');
+            $password = trim($requestData['E_Password'] ?? $requestData['password'] ?? $_POST['E_Password'] ?? $_POST['password'] ?? '');
+            if (empty($identifier)) {
+                http_response_code(400);
+                echo json_encode(['status' => 'error', 'message' => 'يرجى إدخال رقم الهاتف أو البريد الإلكتروني'], JSON_UNESCAPED_UNICODE);
+                break;
+            }
+
+            $stmt = $pdo->prepare("SELECT * FROM elderly WHERE E_PhonNumber = ? OR E_Email = ?");
+            $stmt->execute([$identifier, $identifier]);
+            $senior = $stmt->fetch();
+
+            if ($senior) {
+                if (!empty($password) && !empty($senior['E_Password']) && $senior['E_Password'] !== $password) {
+                    http_response_code(401);
+                    echo json_encode(['status' => 'error', 'message' => 'كلمة المرور غير صحيحة لكبير السن'], JSON_UNESCAPED_UNICODE);
+                    break;
+                }
+                echo json_encode([
+                    'status' => 'success',
+                    'message' => 'تم تسجيل دخول كبير السن بنجاح',
+                    'role' => 'senior',
+                    'elderly' => $senior
+                ], JSON_UNESCAPED_UNICODE);
+            } else {
+                http_response_code(404);
+                echo json_encode(['status' => 'error', 'message' => 'رقم الهاتف أو البريد غير مسجل لكبير سن في قاعدة البيانات'], JSON_UNESCAPED_UNICODE);
+            }
+            break;
+
+        case 'forgot_password':
+            $email = trim($requestData['email'] ?? $_POST['email'] ?? '');
+            $role = trim($requestData['role'] ?? $_POST['role'] ?? '');
+
+            if (empty($email)) {
+                http_response_code(400);
+                echo json_encode(['status' => 'error', 'message' => 'يرجى إدخال البريد الإلكتروني للتواصل'], JSON_UNESCAPED_UNICODE);
+                break;
+            }
+
+            echo json_encode([
+                'status' => 'success',
+                'message' => 'تم استلام طلبك، وسيتم التواصل معك عبر البريد الإلكتروني لإعادة تعيين كلمة المرور.',
+                'email' => $email
+            ], JSON_UNESCAPED_UNICODE);
+            break;
+
+        case 'get_elderly':
+            $id = $requestData['Eldery_ID'] ?? $_GET['Eldery_ID'] ?? null;
+            if ($id) {
+                $stmt = $pdo->prepare("SELECT * FROM elderly WHERE Eldery_ID = ?");
+                $stmt->execute([$id]);
+                $data = $stmt->fetch();
+                if ($data) {
+                    $cgStmt = $pdo->prepare("SELECT Caregivers_ID, C_Name, C_PhonNumber, C_Relationship, C_Email FROM caregivers WHERE Eldery_ID = ? LIMIT 1");
+                    $cgStmt->execute([$id]);
+                    $data['caregiver'] = $cgStmt->fetch() ?: null;
+                }
+            } else {
+                $stmt = $pdo->query("SELECT * FROM elderly ORDER BY Eldery_ID ASC");
+                $data = $stmt->fetchAll();
+            }
+            echo json_encode(['status' => 'success', 'data' => $data], JSON_UNESCAPED_UNICODE);
+            break;
+
+        // 7. تحديث بيانات كبير السن
+        case 'update_elderly':
+            $id = $requestData['Eldery_ID'] ?? $_POST['Eldery_ID'] ?? null;
+            $name = trim($requestData['E_Name'] ?? $_POST['E_Name'] ?? '');
+            $sex = trim($requestData['E_sex'] ?? $_POST['E_sex'] ?? '');
+            $phone = trim($requestData['E_PhonNumber'] ?? $_POST['E_PhonNumber'] ?? '');
+
+            if (!$id) {
+                http_response_code(400);
+                echo json_encode(['status' => 'error', 'message' => 'معرف كبير السن مطلوب'], JSON_UNESCAPED_UNICODE);
+                break;
+            }
+
+            $stmt = $pdo->prepare("UPDATE elderly SET E_Name = ?, E_sex = ?, E_PhonNumber = ? WHERE Eldery_ID = ?");
+            $stmt->execute([$name, $sex, $phone, $id]);
+
+            echo json_encode(['status' => 'success', 'message' => 'تم تحديث بيانات كبير السن بنجاح'], JSON_UNESCAPED_UNICODE);
+            break;
+
+        // 8. ربط مقدم الرعاية بكبير السن
+        case 'link_elderly':
+            $caregiverId = $requestData['Caregivers_ID'] ?? $_POST['Caregivers_ID'] ?? null;
+            $elderlyId = $requestData['Eldery_ID'] ?? $_POST['Eldery_ID'] ?? null;
+
+            if (!$caregiverId || !$elderlyId) {
+                http_response_code(400);
+                echo json_encode(['status' => 'error', 'message' => 'معرف مقدم الرعاية ومعرف كبير السن مطلوبان'], JSON_UNESCAPED_UNICODE);
+                break;
+            }
+
+            $stmt = $pdo->prepare("UPDATE caregivers SET Eldery_ID = ? WHERE Caregivers_ID = ?");
+            $stmt->execute([$elderlyId, $caregiverId]);
+
+            echo json_encode(['status' => 'success', 'message' => 'تم ربط الحساب بكبير السن بنجاح'], JSON_UNESCAPED_UNICODE);
+            break;
+
+        // 9. الأدوية (جدول medications)
+        case 'get_medications':
+            $elderlyId = $requestData['Elderly_ID'] ?? $_GET['Elderly_ID'] ?? null;
+            if ($elderlyId) {
+                $stmt = $pdo->prepare("SELECT * FROM medications WHERE Elderly_ID = ? ORDER BY Medicayion_ID DESC");
+                $stmt->execute([$elderlyId]);
+            } else {
+                $stmt = $pdo->query("SELECT * FROM medications ORDER BY Medicayion_ID DESC");
+            }
+            echo json_encode(['status' => 'success', 'data' => $stmt->fetchAll()], JSON_UNESCAPED_UNICODE);
+            break;
+
+        case 'add_medication':
+            $name = trim($requestData['M_Name'] ?? $_POST['M_Name'] ?? '');
+            $dose = trim($requestData['M_much'] ?? $_POST['M_much'] ?? '');
+            $repeat = trim($requestData['M_RepatTime'] ?? $_POST['M_RepatTime'] ?? '');
+            $elderlyId = $requestData['Elderly_ID'] ?? $_POST['Elderly_ID'] ?? null;
+
+            if (empty($name)) {
+                http_response_code(400);
+                echo json_encode(['status' => 'error', 'message' => 'اسم الدواء مطلوب'], JSON_UNESCAPED_UNICODE);
+                break;
+            }
+
+            $idStmt = $pdo->query("SELECT IFNULL(MAX(Medicayion_ID), 0) + 1 AS next_id FROM medications");
+            $nextId = (int)$idStmt->fetch()['next_id'];
+
+            $stmt = $pdo->prepare("INSERT INTO medications (Medicayion_ID, M_Name, M_much, M_RepatTime, Elderly_ID) VALUES (?, ?, ?, ?, ?)");
+            $stmt->execute([$nextId, $name, $dose, $repeat, $elderlyId]);
+
+            echo json_encode(['status' => 'success', 'message' => 'تمت إضافة الدواء بنجاح', 'id' => $nextId], JSON_UNESCAPED_UNICODE);
+            break;
+
+        case 'delete_medication':
+            $id = $requestData['Medicayion_ID'] ?? $_POST['Medicayion_ID'] ?? null;
+            if ($id) {
+                $stmt = $pdo->prepare("DELETE FROM medications WHERE Medicayion_ID = ?");
+                $stmt->execute([$id]);
+                echo json_encode(['status' => 'success', 'message' => 'تم حذف الدواء بنجاح'], JSON_UNESCAPED_UNICODE);
+            } else {
+                http_response_code(400);
+                echo json_encode(['status' => 'error', 'message' => 'معرف الدواء مطلوب للحذف'], JSON_UNESCAPED_UNICODE);
+            }
+            break;
+
+        // 10. المواعيد (جدول appointments)
+        case 'get_appointments':
+            $elderlyId = $requestData['Elderly_ID'] ?? $_GET['Elderly_ID'] ?? null;
+            if ($elderlyId) {
+                $stmt = $pdo->prepare("SELECT * FROM appointments WHERE Elderly_ID = ? ORDER BY A_Date ASC, A_Time ASC");
+                $stmt->execute([$elderlyId]);
+            } else {
+                $stmt = $pdo->query("SELECT * FROM appointments ORDER BY A_Date ASC, A_Time ASC");
+            }
+            echo json_encode(['status' => 'success', 'data' => $stmt->fetchAll()], JSON_UNESCAPED_UNICODE);
+            break;
+
+        case 'add_appointment':
+            $time = $requestData['A_Time'] ?? $_POST['A_Time'] ?? null;
+            $date = $requestData['A_Date'] ?? $_POST['A_Date'] ?? null;
+            $type = trim($requestData['A_DateType'] ?? $_POST['A_DateType'] ?? '');
+            $location = trim($requestData['A_Location'] ?? $_POST['A_Location'] ?? '');
+            $note = trim($requestData['A_Note'] ?? $_POST['A_Note'] ?? '');
+            $elderlyId = $requestData['Elderly_ID'] ?? $_POST['Elderly_ID'] ?? null;
+
+            $idStmt = $pdo->query("SELECT IFNULL(MAX(Appointment_ID), 0) + 1 AS next_id FROM appointments");
+            $nextId = (int)$idStmt->fetch()['next_id'];
+
+            $stmt = $pdo->prepare("INSERT INTO appointments (Appointment_ID, A_Time, A_Date, A_DateType, A_Location, A_Note, Elderly_ID) VALUES (?, ?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$nextId, $time, $date, $type, $location, $note, $elderlyId]);
+
+            echo json_encode(['status' => 'success', 'message' => 'تمت إضافة الموعد بنجاح', 'id' => $nextId], JSON_UNESCAPED_UNICODE);
+            break;
+
+        case 'delete_appointment':
+            $id = $requestData['Appointment_ID'] ?? $_POST['Appointment_ID'] ?? null;
+            if ($id) {
+                $stmt = $pdo->prepare("DELETE FROM appointments WHERE Appointment_ID = ?");
+                $stmt->execute([$id]);
+                echo json_encode(['status' => 'success', 'message' => 'تم حذف الموعد بنجاح'], JSON_UNESCAPED_UNICODE);
+            } else {
+                http_response_code(400);
+                echo json_encode(['status' => 'error', 'message' => 'معرف الموعد مطلوب للحذف'], JSON_UNESCAPED_UNICODE);
+            }
+            break;
+
+        // 11. جهات اتصال الطوارئ (جدول emergency_contacts)
+        case 'get_emergency_contacts':
+            $elderlyId = $requestData['Eldery_ID'] ?? $_GET['Eldery_ID'] ?? null;
+            if ($elderlyId) {
+                $stmt = $pdo->prepare("SELECT * FROM emergency_contacts WHERE Eldery_ID = ? ORDER BY Priority ASC, contact_ID ASC");
+                $stmt->execute([$elderlyId]);
+            } else {
+                $stmt = $pdo->query("SELECT * FROM emergency_contacts ORDER BY Priority ASC, contact_ID ASC");
+            }
+            echo json_encode(['status' => 'success', 'data' => $stmt->fetchAll()], JSON_UNESCAPED_UNICODE);
+            break;
+
+        case 'add_emergency_contact':
+            $name = trim($requestData['contact_Name'] ?? $_POST['contact_Name'] ?? '');
+            $phone = trim($requestData['Phone_Number'] ?? $_POST['Phone_Number'] ?? '');
+            $rel = trim($requestData['Relationship'] ?? $_POST['Relationship'] ?? '');
+            $priority = (int)($requestData['Priority'] ?? $_POST['Priority'] ?? 1);
+            $elderlyId = $requestData['Eldery_ID'] ?? $_POST['Eldery_ID'] ?? null;
+
+            if (empty($name) || empty($phone)) {
+                http_response_code(400);
+                echo json_encode(['status' => 'error', 'message' => 'الاسم ورقم الهاتف مطلوبان لجهة الاتصال'], JSON_UNESCAPED_UNICODE);
+                break;
+            }
+
+            $idStmt = $pdo->query("SELECT IFNULL(MAX(contact_ID), 0) + 1 AS next_id FROM emergency_contacts");
+            $nextId = (int)$idStmt->fetch()['next_id'];
+
+            $stmt = $pdo->prepare("INSERT INTO emergency_contacts (contact_ID, contact_Name, Phone_Number, Relationship, Priority, Eldery_ID) VALUES (?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$nextId, $name, $phone, $rel, $priority, $elderlyId]);
+
+            echo json_encode(['status' => 'success', 'message' => 'تمت إضافة جهة اتصال الطوارئ بنجاح', 'id' => $nextId], JSON_UNESCAPED_UNICODE);
+            break;
+
+        case 'delete_emergency_contact':
+            $id = $requestData['contact_ID'] ?? $_POST['contact_ID'] ?? null;
+            if ($id) {
+                $stmt = $pdo->prepare("DELETE FROM emergency_contacts WHERE contact_ID = ?");
+                $stmt->execute([$id]);
+                echo json_encode(['status' => 'success', 'message' => 'تم حذف جهة اتصال الطوارئ بنجاح'], JSON_UNESCAPED_UNICODE);
+            } else {
+                http_response_code(400);
+                echo json_encode(['status' => 'error', 'message' => 'معرف جهة الاتصال مطلوب للحذف'], JSON_UNESCAPED_UNICODE);
+            }
+            break;
+
+        // 12. الأجهزة (جدول devices)
+        case 'get_devices':
+            $elderlyId = $requestData['Elderly_ID'] ?? $_GET['Elderly_ID'] ?? null;
+            if ($elderlyId) {
+                $stmt = $pdo->prepare("SELECT * FROM devices WHERE Elderly_ID = ? ORDER BY Devices_ID DESC");
+                $stmt->execute([$elderlyId]);
+            } else {
+                $stmt = $pdo->query("SELECT * FROM devices ORDER BY Devices_ID DESC");
+            }
+            echo json_encode(['status' => 'success', 'data' => $stmt->fetchAll()], JSON_UNESCAPED_UNICODE);
+            break;
+
+        case 'add_device':
+            $type = trim($requestData['D_Type'] ?? $_POST['D_Type'] ?? '');
+            $number = trim($requestData['T_Number'] ?? $_POST['T_Number'] ?? '');
+            $elderlyId = $requestData['Elderly_ID'] ?? $_POST['Elderly_ID'] ?? null;
+
+            $idStmt = $pdo->query("SELECT IFNULL(MAX(Devices_ID), 0) + 1 AS next_id FROM devices");
+            $nextId = (int)$idStmt->fetch()['next_id'];
+
+            $stmt = $pdo->prepare("INSERT INTO devices (Devices_ID, D_Type, T_Number, Elderly_ID) VALUES (?, ?, ?, ?)");
+            $stmt->execute([$nextId, $type, $number, $elderlyId]);
+
+            echo json_encode(['status' => 'success', 'message' => 'تمت إضافة الجهاز بنجاح', 'id' => $nextId], JSON_UNESCAPED_UNICODE);
+            break;
+
+        case 'delete_device':
+            $deviceId = $requestData['Devices_ID'] ?? $_POST['Devices_ID'] ?? null;
+            $elderlyId = $requestData['Elderly_ID'] ?? $_POST['Elderly_ID'] ?? null;
+
+            if ($deviceId) {
+                $stmt = $pdo->prepare("DELETE FROM devices WHERE Devices_ID = ?");
+                $stmt->execute([$deviceId]);
+                echo json_encode(['status' => 'success', 'message' => 'تم فك اقتران وحذف الجهاز بنجاح'], JSON_UNESCAPED_UNICODE);
+            } elseif ($elderlyId) {
+                $stmt = $pdo->prepare("DELETE FROM devices WHERE Elderly_ID = ?");
+                $stmt->execute([$elderlyId]);
+                echo json_encode(['status' => 'success', 'message' => 'تم فك اقتران وحذف جميع أجهزة كبير السن بنجاح'], JSON_UNESCAPED_UNICODE);
+            } else {
+                http_response_code(400);
+                echo json_encode(['status' => 'error', 'message' => 'معرف الجهاز أو معرف كبير السن مطلوب'], JSON_UNESCAPED_UNICODE);
+            }
+            break;
+
+        // 13. مراقبة الصحة والمؤشرات الحيوية (جدول health_monitoring)
+        case 'get_health_monitoring':
+            $elderlyId = $requestData['Elderly_ID'] ?? $_GET['Elderly_ID'] ?? null;
+            if ($elderlyId) {
+                $stmt = $pdo->prepare("SELECT * FROM health_monitoring WHERE Elderly_ID = ? ORDER BY H_Record_ID DESC");
+                $stmt->execute([$elderlyId]);
+            } else {
+                $stmt = $pdo->query("SELECT * FROM health_monitoring ORDER BY H_Record_ID DESC LIMIT 20");
+            }
+            echo json_encode(['status' => 'success', 'data' => $stmt->fetchAll()], JSON_UNESCAPED_UNICODE);
+            break;
+
+        case 'add_health_record':
+            $heartRate = $requestData['Heart_Rate'] ?? null;
+            $bp = $requestData['Blood_pressure'] ?? null;
+            $oxygen = $requestData['Oxyger'] ?? null;
+            $temp = $requestData['Temperature'] ?? null;
+            $steps = $requestData['steps'] ?? null;
+            $hType = $requestData['H_Type'] ?? 'فحص عام';
+            $hDate = $requestData['H_Date'] ?? date('Y-m-d');
+            $hResult = $requestData['H_Result'] ?? 'طبيعي';
+            $elderlyId = $requestData['Elderly_ID'] ?? null;
+
+            $idStmt = $pdo->query("SELECT IFNULL(MAX(H_Record_ID), 0) + 1 AS next_id FROM health_monitoring");
+            $nextId = (int)$idStmt->fetch()['next_id'];
+
+            $stmt = $pdo->prepare("INSERT INTO health_monitoring (H_Record_ID, Heart_Rate, Blood_pressure, Oxyger, Temperature, steps, H_Type, H_Date, H_Result, Elderly_ID) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$nextId, $heartRate, $bp, $oxygen, $temp, $steps, $hType, $hDate, $hResult, $elderlyId]);
+
+            echo json_encode(['status' => 'success', 'message' => 'تم تسجيل المؤشرات الحيوية بنجاح', 'id' => $nextId], JSON_UNESCAPED_UNICODE);
+            break;
+
+        // 14. تتبع الموقع الجغرافي (جدول location_tracking)
+        case 'get_location':
+            $elderlyId = $requestData['Elderly_ID'] ?? $_GET['Elderly_ID'] ?? null;
+            if ($elderlyId) {
+                $stmt = $pdo->prepare("SELECT * FROM location_tracking WHERE Elderly_ID = ? ORDER BY Location_ID DESC LIMIT 1");
+                $stmt->execute([$elderlyId]);
+                $loc = $stmt->fetch();
+            } else {
+                $stmt = $pdo->query("SELECT * FROM location_tracking ORDER BY Location_ID DESC LIMIT 10");
+                $loc = $stmt->fetchAll();
+            }
+            echo json_encode(['status' => 'success', 'data' => $loc], JSON_UNESCAPED_UNICODE);
+            break;
+
+        case 'update_location':
+            $lat = $requestData['L_Latitude'] ?? null;
+            $lng = $requestData['L_Longitude'] ?? null;
+            $scor = $requestData['L_Scor'] ?? 100;
+            $elderlyId = $requestData['Elderly_ID'] ?? null;
+
+            $idStmt = $pdo->query("SELECT IFNULL(MAX(Location_ID), 0) + 1 AS next_id FROM location_tracking");
+            $nextId = (int)$idStmt->fetch()['next_id'];
+
+            $stmt = $pdo->prepare("INSERT INTO location_tracking (Location_ID, L_Latitude, L_Longitude, L_UpdateTime, L_Scor, Elderly_ID) VALUES (?, ?, ?, NOW(), ?, ?)");
+            $stmt->execute([$nextId, $lat, $lng, $scor, $elderlyId]);
+
+            echo json_encode(['status' => 'success', 'message' => 'تم تحديث الموقع بنجاح', 'id' => $nextId], JSON_UNESCAPED_UNICODE);
+            break;
+
+        // 15. التنبيهات والإشعارات (جدول notifications)
+        case 'get_notifications':
+            $elderlyId = $requestData['Eldery_ID'] ?? $_GET['Eldery_ID'] ?? null;
+            $caregiverId = $requestData['Caregiver_ID'] ?? $_GET['Caregiver_ID'] ?? null;
+
+            if ($elderlyId) {
+                $stmt = $pdo->prepare("SELECT * FROM notifications WHERE Eldery_ID = ? ORDER BY Notifications_ID DESC");
+                $stmt->execute([$elderlyId]);
+            } elseif ($caregiverId) {
+                $stmt = $pdo->prepare("SELECT * FROM notifications WHERE Caregiver_ID = ? ORDER BY Notifications_ID DESC");
+                $stmt->execute([$caregiverId]);
+            } else {
+                $stmt = $pdo->query("SELECT * FROM notifications ORDER BY Notifications_ID DESC");
+            }
+            echo json_encode(['status' => 'success', 'data' => $stmt->fetchAll()], JSON_UNESCAPED_UNICODE);
+            break;
+
+        // 16. المناطق الآمنة (جدول safe_zones)
+                case 'add_notification':
+            $title = trim($requestData['N_Title'] ?? $_POST['N_Title'] ?? '');
+            $message = trim($requestData['N_Message'] ?? $_POST['N_Message'] ?? '');
+            $type = trim($requestData['N_Type'] ?? $_POST['N_Type'] ?? 'alert');
+            $status = trim($requestData['N_Status'] ?? $_POST['N_Status'] ?? 'unread');
+            $elderlyId = $requestData['Eldery_ID'] ?? $_POST['Eldery_ID'] ?? null;
+            $caregiverId = $requestData['Caregiver_ID'] ?? $_POST['Caregiver_ID'] ?? null;
+
+            $idStmt = $pdo->query("SELECT IFNULL(MAX(Notifications_ID), 0) + 1 AS next_id FROM notifications");
+            $nextId = (int)$idStmt->fetch()['next_id'];
+
+            $date = date('Y-m-d');
+            $time = date('H:i:s');
+
+            $stmt = $pdo->prepare("INSERT INTO notifications (Notifications_ID, N_Title, N_Message, N_Type, N_Date, N_Time, N_Status, Caregiver_ID, Eldery_ID) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$nextId, $title, $message, $type, $date, $time, $status, $caregiverId, $elderlyId]);
+
+            echo json_encode(['status' => 'success', 'message' => 'تمت إضافة الإشعار بنجاح', 'id' => $nextId], JSON_UNESCAPED_UNICODE);
+            break;
+
+        case 'get_safe_zones':
+            $stmt = $pdo->query("SELECT * FROM safe_zones ORDER BY Zone_ID ASC");
+            echo json_encode(['status' => 'success', 'data' => $stmt->fetchAll()], JSON_UNESCAPED_UNICODE);
+            break;
+
+        // 17. سجلات الطوارئ والاستغاثة (جدول emergency_log)
+        case 'get_emergency_log':
+            $elderlyId = $requestData['Elderly_ID'] ?? $_GET['Elderly_ID'] ?? null;
+            if ($elderlyId) {
+                $stmt = $pdo->prepare("SELECT * FROM emergency_log WHERE Elderly_ID = ? ORDER BY Emergency_ID DESC");
+                $stmt->execute([$elderlyId]);
+            } else {
+                $stmt = $pdo->query("SELECT * FROM emergency_log ORDER BY Emergency_ID DESC LIMIT 30");
+            }
+            echo json_encode(['status' => 'success', 'data' => $stmt->fetchAll()], JSON_UNESCAPED_UNICODE);
+            break;
+
+        case 'add_emergency_log':
+            $eType = trim($requestData['E_Type'] ?? $_POST['E_Type'] ?? 'نداء استغاثة طارئ SOS');
+            $eLocation = trim($requestData['E_Location'] ?? $_POST['E_Location'] ?? 'الموقع الحالي لكبير السن');
+            $lat = $requestData['latitude'] ?? null;
+            $lng = $requestData['Longitude'] ?? null;
+            $eState = trim($requestData['E_State'] ?? $_POST['E_State'] ?? 'نشط - قيد المتابعة');
+            $description = trim($requestData['Descripion'] ?? $_POST['Descripion'] ?? 'تم إرسال نداء استغاثة فوري من قبل التطبيق/الساعة');
+            $elderlyId = $requestData['Elderly_ID'] ?? $_POST['Elderly_ID'] ?? null;
+
+            $date = date('Y-m-d');
+            $time = date('H:i:s');
+
+            $idStmt = $pdo->query("SELECT IFNULL(MAX(Emergency_ID), 0) + 1 AS next_id FROM emergency_log");
+            $nextId = (int)$idStmt->fetch()['next_id'];
+
+            $stmt = $pdo->prepare("INSERT INTO emergency_log (Emergency_ID, E_Type, E_Date, E_Time, E_Location, latitude, Longitude, E_State, Descripion, Elderly_ID) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$nextId, $eType, $date, $time, $eLocation, $lat, $lng, $eState, $description, $elderlyId]);
+
+            // إضافة إشعار طوارئ فوري في جدول notifications أيضاً
+            $notifIdStmt = $pdo->query("SELECT IFNULL(MAX(Notifications_ID), 0) + 1 AS next_id FROM notifications");
+            $nextNotifId = (int)$notifIdStmt->fetch()['next_id'];
+
+            $notifStmt = $pdo->prepare("INSERT INTO notifications (Notifications_ID, N_Title, N_Message, N_Type, N_Date, N_Time, N_Status, Eldery_ID) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+            $notifStmt->execute([$nextNotifId, '🚨 نداء طوارئ SOS عاجل!', "$eType: $description في $eLocation", 'emergency', $date, $time, 'unread', $elderlyId]);
+
+            echo json_encode(['status' => 'success', 'message' => 'تم تسجيل وتوثيق حالة الطوارئ بنجاح', 'id' => $nextId], JSON_UNESCAPED_UNICODE);
+            break;
+
+        case 'update_emergency_status':
+            $emergencyId = $requestData['Emergency_ID'] ?? $_POST['Emergency_ID'] ?? null;
+            $state = trim($requestData['E_State'] ?? $_POST['E_State'] ?? 'قيد المتابعة');
+            $note = trim($requestData['Descripion'] ?? $_POST['Descripion'] ?? '');
+
+            if (!$emergencyId) {
+                http_response_code(400);
+                echo json_encode(['status' => 'error', 'message' => 'معرف البلاغ مطلوب'], JSON_UNESCAPED_UNICODE);
+                break;
+            }
+
+            if (!empty($note)) {
+                $stmt = $pdo->prepare("UPDATE emergency_log SET E_State = ?, Descripion = ? WHERE Emergency_ID = ?");
+                $stmt->execute([$state, $note, $emergencyId]);
+            } else {
+                $stmt = $pdo->prepare("UPDATE emergency_log SET E_State = ? WHERE Emergency_ID = ?");
+                $stmt->execute([$state, $emergencyId]);
+            }
+
+            echo json_encode([
+                'status' => 'success',
+                'message' => 'تم تحديث حالة البلاغ بنجاح',
+                'Emergency_ID' => $emergencyId,
+                'E_State' => $state
+            ], JSON_UNESCAPED_UNICODE);
+            break;
+
+        // 18. نوع الرعاية (جدول type_of_care)
+        case 'get_type_of_care':
+            $elderlyId = $requestData['Eldery_ID'] ?? $_GET['Eldery_ID'] ?? null;
+            $caregiverId = $requestData['Caregivers_ID'] ?? $_GET['Caregivers_ID'] ?? null;
+
+            if ($elderlyId) {
+                $stmt = $pdo->prepare("SELECT * FROM type_of_care WHERE Eldery_ID = ? ORDER BY Tc_id DESC");
+                $stmt->execute([$elderlyId]);
+            } elseif ($caregiverId) {
+                $stmt = $pdo->prepare("SELECT * FROM type_of_care WHERE Caregivers_ID = ? ORDER BY Tc_id DESC");
+                $stmt->execute([$caregiverId]);
+            } else {
+                $stmt = $pdo->query("SELECT * FROM type_of_care ORDER BY Tc_id DESC");
+            }
+            echo json_encode(['status' => 'success', 'data' => $stmt->fetchAll()], JSON_UNESCAPED_UNICODE);
+            break;
+
+        case 'add_type_of_care':
+            $careType = trim($requestData['Care_Type'] ?? $_POST['Care_Type'] ?? 'رعاية صحية شاملة');
+            $caregiverId = $requestData['Caregivers_ID'] ?? $_POST['Caregivers_ID'] ?? null;
+            $elderlyId = $requestData['Eldery_ID'] ?? $_POST['Eldery_ID'] ?? null;
+
+            $idStmt = $pdo->query("SELECT IFNULL(MAX(Tc_id), 0) + 1 AS next_id FROM type_of_care");
+            $nextId = (int)$idStmt->fetch()['next_id'];
+
+            $stmt = $pdo->prepare("INSERT INTO type_of_care (Tc_id, Care_Type, Caregivers_ID, Eldery_ID) VALUES (?, ?, ?, ?)");
+            $stmt->execute([$nextId, $careType, $caregiverId, $elderlyId]);
+
+            echo json_encode(['status' => 'success', 'message' => 'تم تسجيل نوع الرعاية بنجاح', 'id' => $nextId], JSON_UNESCAPED_UNICODE);
+            break;
+
+
+        case 'get_location_history':
+            $elderlyId = $requestData['Elderly_ID'] ?? $_GET['Elderly_ID'] ?? null;
+            if ($elderlyId) {
+                $stmt = $pdo->prepare("SELECT * FROM location_tracking WHERE Elderly_ID = ? ORDER BY Location_ID DESC LIMIT 15");
+                $stmt->execute([$elderlyId]);
+            } else {
+                $stmt = $pdo->query("SELECT * FROM location_tracking ORDER BY Location_ID DESC LIMIT 15");
+            }
+            echo json_encode(['status' => 'success', 'data' => $stmt->fetchAll()], JSON_UNESCAPED_UNICODE);
+            break;
+
+        // 19. الخدمات (جدول services)
+        case 'get_services':
+            $stmt = $pdo->query("SELECT * FROM services ORDER BY Service_ID ASC");
+            $services = $stmt->fetchAll();
+            if (empty($services)) {
+                $defaultServices = [
+                    ['رعاية صحية وتمريضية منزلية', 'صحي', 'زيارات تمريضية دورية لمتابعة المؤشرات الحيوية وإعطاء الأدوية والحقن ورعاية الجروح.', 'نشط'],
+                    ['مرافقة شخصية وإشراف', 'مرافقة', 'مرافقة يومية لكبير السن في المشاوير، مواعيد المستشفيات والأنشطة الاجتماعية.', 'نشط'],
+                    ['علاج طبيعي وتأهيل حركي', 'تأهيل', 'جلسات علاج طبيعي وتمارين تنشيطية لكبار السن داخل المنزل مع أخصائيين معتمدين.', 'نشط'],
+                    ['توصيل ونقل طبي آمن', 'نقل', 'سيارات مجهزة لنقل كبار السن وذوي الاحتياجات للمستشفيات والعيادات بأمان تام.', 'نشط'],
+                    ['تغذية وإعداد وجبات صحية', 'تغذية', 'برامج غذائية مخصصة لحالات السكري والضغط وتحضير وجبات صحية متوازنة.', 'نشط'],
+                ];
+                $ins = $pdo->prepare("INSERT INTO services (Service_ID, S_Name, S_Type, S_Description, S_Status) VALUES (?, ?, ?, ?, ?)");
+                foreach ($defaultServices as $idx => $ds) {
+                    $ins->execute([$idx + 1, $ds[0], $ds[1], $ds[2], $ds[3]]);
+                }
+                $stmt = $pdo->query("SELECT * FROM services ORDER BY Service_ID ASC");
+                $services = $stmt->fetchAll();
+            }
+            echo json_encode(['status' => 'success', 'data' => $services], JSON_UNESCAPED_UNICODE);
+            break;
+
+        // 20. طلبات الخدمات (جدول services_request)
+        case 'request_service':
+            $serviceId = $requestData['Service_ID'] ?? $_POST['Service_ID'] ?? 1;
+            $caregiverId = $requestData['Caregivers_id'] ?? $_POST['Caregivers_id'] ?? null;
+            $elderlyId = $requestData['Elderly_ID'] ?? $_POST['Elderly_ID'] ?? null;
+            $note = trim($requestData['Requst_Note'] ?? $_POST['Requst_Note'] ?? 'طلب خدمة عبر تطبيق يُسر');
+            $date = date('Y-m-d');
+            $status = 'قيد المراجعة والاعتماد';
+
+            $idStmt = $pdo->query("SELECT IFNULL(MAX(Service_Requst_ID), 0) + 1 AS next_id FROM services_request");
+            $nextId = (int)$idStmt->fetch()['next_id'];
+
+            $stmt = $pdo->prepare("INSERT INTO services_request (Service_Requst_ID, Requst_Date, Requst_Status, Requst_Note, Service_ID, Caregivers_id, Elderly_ID) VALUES (?, ?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$nextId, $date, $status, $note, $serviceId, $caregiverId, $elderlyId]);
+
+            $notifIdStmt = $pdo->query("SELECT IFNULL(MAX(Notifications_ID), 0) + 1 AS next_id FROM notifications");
+            $nextNotifId = (int)$notifIdStmt->fetch()['next_id'];
+            $notifStmt = $pdo->prepare("INSERT INTO notifications (Notifications_ID, N_Title, N_Message, N_Type, N_Date, N_Time, N_Status, Caregiver_ID, Eldery_ID) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $notifStmt->execute([$nextNotifId, 'تم استلام طلب الخدمة', "طلبك رقم #$nextId قيد المراجعة: $note", 'service', $date, date('H:i:s'), 'unread', $caregiverId, $elderlyId]);
+
+            echo json_encode(['status' => 'success', 'message' => 'تم تقديم طلب الخدمة بنجاح وسيتم التواصل معك قريباً', 'id' => $nextId], JSON_UNESCAPED_UNICODE);
+            break;
+
+        case 'get_service_requests':
+            $elderlyId = $requestData['Elderly_ID'] ?? $_GET['Elderly_ID'] ?? null;
+            $caregiverId = $requestData['Caregivers_id'] ?? $_GET['Caregivers_id'] ?? null;
+
+            if ($elderlyId) {
+                $stmt = $pdo->prepare("SELECT sr.*, s.S_Name, s.S_Type, s.S_Description FROM services_request sr LEFT JOIN services s ON sr.Service_ID = s.Service_ID WHERE sr.Elderly_ID = ? ORDER BY sr.Service_Requst_ID DESC");
+                $stmt->execute([$elderlyId]);
+            } elseif ($caregiverId) {
+                $stmt = $pdo->prepare("SELECT sr.*, s.S_Name, s.S_Type, s.S_Description FROM services_request sr LEFT JOIN services s ON sr.Service_ID = s.Service_ID WHERE sr.Caregivers_id = ? ORDER BY sr.Service_Requst_ID DESC");
+                $stmt->execute([$caregiverId]);
+            } else {
+                $stmt = $pdo->query("SELECT sr.*, s.S_Name, s.S_Type, s.S_Description FROM services_request sr LEFT JOIN services s ON sr.Service_ID = s.Service_ID ORDER BY sr.Service_Requst_ID DESC LIMIT 20");
+            }
+            echo json_encode(['status' => 'success', 'data' => $stmt->fetchAll()], JSON_UNESCAPED_UNICODE);
+            break;
+
+        // 21. التنبيهات الصحية (جدول health_alerts)
+        case 'get_health_alerts':
+            $elderlyId = $requestData['Elderly_ID'] ?? $_GET['Elderly_ID'] ?? null;
+            if ($elderlyId) {
+                $stmt = $pdo->prepare("SELECT ha.*, hm.Heart_Rate, hm.Blood_pressure, hm.Oxyger, hm.Temperature FROM health_alerts ha LEFT JOIN health_monitoring hm ON ha.H_Record_ID = hm.H_Record_ID WHERE (hm.Elderly_ID = ? OR ha.H_Record_ID IS NULL) ORDER BY ha.Alert_ID DESC");
+                $stmt->execute([$elderlyId]);
+            } else {
+                $stmt = $pdo->query("SELECT ha.*, hm.Heart_Rate, hm.Blood_pressure, hm.Oxyger, hm.Temperature FROM health_alerts ha LEFT JOIN health_monitoring hm ON ha.H_Record_ID = hm.H_Record_ID ORDER BY ha.Alert_ID DESC LIMIT 20");
+            }
+            echo json_encode(['status' => 'success', 'data' => $stmt->fetchAll()], JSON_UNESCAPED_UNICODE);
+            break;
+
+        case 'add_health_alert':
+            $type = trim($requestData['A_Type'] ?? $_POST['A_Type'] ?? 'تنبيه صحي');
+            $desc = trim($requestData['A_Description'] ?? $_POST['A_Description'] ?? 'مؤشر صحي غير معتاد');
+            $level = trim($requestData['A_Level'] ?? $_POST['A_Level'] ?? 'متوسط');
+            $status = trim($requestData['A_Status'] ?? $_POST['A_Status'] ?? 'نشط');
+            $hRecordId = $requestData['H_Record_ID'] ?? $_POST['H_Record_ID'] ?? null;
+            $date = date('Y-m-d');
+
+            $idStmt = $pdo->query("SELECT IFNULL(MAX(Alert_ID), 0) + 1 AS next_id FROM health_alerts");
+            $nextId = (int)$idStmt->fetch()['next_id'];
+
+            $stmt = $pdo->prepare("INSERT INTO health_alerts (Alert_ID, A_Type, A_Description, A_Level, A_Date, A_Status, H_Record_ID) VALUES (?, ?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$nextId, $type, $desc, $level, $date, $status, $hRecordId]);
+
+            echo json_encode(['status' => 'success', 'message' => 'تم تسجيل التنبيه الصحي', 'id' => $nextId], JSON_UNESCAPED_UNICODE);
+            break;
+
+        // 22. إدارة الأجهزة (جدول devices)
+        case 'get_devices':
+            $elderlyId = $requestData['Elderly_ID'] ?? $_GET['Elderly_ID'] ?? $_POST['Elderly_ID'] ?? null;
+            if ($elderlyId) {
+                $stmt = $pdo->prepare("SELECT * FROM devices WHERE Elderly_ID = ? ORDER BY Devices_ID DESC");
+                $stmt->execute([$elderlyId]);
+            } else {
+                $stmt = $pdo->query("SELECT * FROM devices ORDER BY Devices_ID DESC");
+            }
+            echo json_encode(['status' => 'success', 'data' => $stmt->fetchAll()], JSON_UNESCAPED_UNICODE);
+            break;
+
+        case 'add_device':
+            $type = trim($requestData['D_Type'] ?? $_POST['D_Type'] ?? 'ساعة ذكية');
+            $number = trim($requestData['T_Number'] ?? $_POST['T_Number'] ?? 'YS-WATCH-1');
+            $elderlyId = $requestData['Elderly_ID'] ?? $_POST['Elderly_ID'] ?? null;
+
+            $idStmt = $pdo->query("SELECT IFNULL(MAX(Devices_ID), 0) + 1 AS next_id FROM devices");
+            $nextId = (int)$idStmt->fetch()['next_id'];
+
+            $stmt = $pdo->prepare("INSERT INTO devices (Devices_ID, D_Type, T_Number, Elderly_ID) VALUES (?, ?, ?, ?)");
+            $stmt->execute([$nextId, $type, $number, $elderlyId]);
+
+            echo json_encode([
+                'status' => 'success',
+                'message' => 'تم إضافة الجهاز بنجاح',
+                'id' => $nextId,
+                'data' => [
+                    'Devices_ID' => $nextId,
+                    'D_Type' => $type,
+                    'T_Number' => $number,
+                    'Elderly_ID' => $elderlyId,
+                ]
+            ], JSON_UNESCAPED_UNICODE);
+            break;
+
+        case 'delete_device':
+            $deviceId = $requestData['Devices_ID'] ?? $_POST['Devices_ID'] ?? $_GET['Devices_ID'] ?? null;
+            $elderlyId = $requestData['Elderly_ID'] ?? $_POST['Elderly_ID'] ?? null;
+
+            if ($deviceId) {
+                $stmt = $pdo->prepare("DELETE FROM devices WHERE Devices_ID = ?");
+                $stmt->execute([$deviceId]);
+                echo json_encode(['status' => 'success', 'message' => 'تم فك اقتران وحذف الجهاز بنجاح'], JSON_UNESCAPED_UNICODE);
+            } elseif ($elderlyId) {
+                $stmt = $pdo->prepare("DELETE FROM devices WHERE Elderly_ID = ?");
+                $stmt->execute([$elderlyId]);
+                echo json_encode(['status' => 'success', 'message' => 'تم فك اقتران أجهزة كبير السن بنجاح'], JSON_UNESCAPED_UNICODE);
+            } else {
+                http_response_code(400);
+                echo json_encode(['status' => 'error', 'message' => 'معرف الجهاز أو كبير السن مطلوب'], JSON_UNESCAPED_UNICODE);
+            }
+            break;
+
+        default:
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'الإجراء المطلوب غير معروف: ' . htmlspecialchars($action)], JSON_UNESCAPED_UNICODE);
+            break;
+    }
+} catch (PDOException $e) {
+    http_response_code(500);
+    echo json_encode([
+        'status' => 'error',
+        'message' => 'خطأ في استعلام قاعدة البيانات: ' . $e->getMessage()
+    ], JSON_UNESCAPED_UNICODE);
+}

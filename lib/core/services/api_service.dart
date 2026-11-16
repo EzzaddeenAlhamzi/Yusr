@@ -1,0 +1,1205 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+
+/// خدمة الاتصال بقاعدة البيانات المحلية MySQL/phpMyAdmin عبر واجهة PHP و PDO
+/// ترتبط بـ db.php و index.php وتقبل الاتصال من أي جهاز أو شبكة
+class ApiService {
+  ApiService._();
+  static final ApiService instance = ApiService._();
+
+  static const String officeLANBaseUrl =
+      'http://192.168.0.252/yusr_api/index.php';
+  static const String officeLANPort8000 =
+      'http://192.168.0.252:8000/api/legacy';
+  static const String baseUrl = 'http://localhost/yusr_api/index.php';
+  static const String emulatorBaseUrl = 'http://10.0.2.2/yusr_api/index.php';
+  static const String emulatorPort8000 = 'http://10.0.2.2:8000/api/legacy';
+  static const String loopbackBaseUrl = 'http://127.0.0.1/yusr_api/index.php';
+  static const String loopbackPort8000 = 'http://127.0.0.1:8000/api/legacy';
+  static const String usbAdbBaseUrl =
+      'http://127.0.0.1:8080/yusr_api/index.php';
+  static const String usbAdbLocalhost =
+      'http://localhost:8080/yusr_api/index.php';
+
+  static final List<String> _candidateUrls = [
+    officeLANBaseUrl,   // http://192.168.0.252/yusr_api/index.php (Apache Gateway Port 80)
+    officeLANPort8000,  // http://192.168.0.252:8000/api/legacy (Laravel Direct Port 8000)
+    if (Platform.isAndroid) ...[
+      emulatorBaseUrl,  // http://10.0.2.2/yusr_api/index.php
+      emulatorPort8000, // http://10.0.2.2:8000/api/legacy
+      usbAdbLocalhost,
+    ],
+    loopbackBaseUrl,
+    loopbackPort8000,
+    baseUrl,
+  ];
+
+  static String? _workingUrl;
+  static bool _isDiscovering = false;
+
+  final HttpClient _client = HttpClient()
+    ..connectionTimeout = const Duration(seconds: 8);
+
+  /// جلب الرابط النشط حالياً
+  static String? get workingUrl => _workingUrl;
+
+  /// تعيين عنوان خادم مخصص يدوياً (لأي شبكة أو جهاز جديد)
+  Future<bool> setCustomServer(String ipOrUrl) async {
+    String cleanUrl = ipOrUrl.trim();
+    if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
+      cleanUrl = 'http://$cleanUrl';
+    }
+    if (!cleanUrl.endsWith('index.php')) {
+      if (!cleanUrl.endsWith('/')) cleanUrl = '$cleanUrl/';
+      if (!cleanUrl.contains('yusr_api')) {
+        cleanUrl = '${cleanUrl}yusr_api/index.php';
+      } else {
+        cleanUrl = '${cleanUrl}index.php';
+      }
+    }
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('custom_api_url', cleanUrl);
+      _workingUrl = cleanUrl;
+      final ping = await testConnection();
+      if (ping['status'] == 'success') {
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /// كشف الخادم النشط عبر فحص كل العناوين المرشحة وشبكة Wi-Fi المحلية بأقصى سرعة بالتوازي
+  Future<String?> discoverWorkingServer() async {
+    if (_isDiscovering) return _workingUrl;
+    _isDiscovering = true;
+
+    try {
+      final Set<String> candidates = {};
+
+      // 1. العنوان المخصص المحفوظ في تفضيلات المستخدم أولاً
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final savedCustom = prefs.getString('custom_api_url');
+        if (savedCustom != null && savedCustom.isNotEmpty) {
+          candidates.add(savedCustom);
+        }
+        final lastWorking = prefs.getString('last_working_url');
+        if (lastWorking != null && lastWorking.isNotEmpty) {
+          candidates.add(lastWorking);
+        }
+      } catch (_) {}
+
+      // 2. إضافة العناوين المرشحة الثابتة
+      candidates.addAll(_candidateUrls);
+
+      // 3. استكشاف النطاق الفرعي لشبكة Wi-Fi المحلية ديناميكياً
+      try {
+        final interfaces = await NetworkInterface.list(
+          type: InternetAddressType.IPv4,
+          includeLinkLocal: false,
+        );
+        for (final iface in interfaces) {
+          for (final addr in iface.addresses) {
+            if (!addr.isLoopback) {
+              final parts = addr.address.split('.');
+              if (parts.length == 4) {
+                final prefix = '${parts[0]}.${parts[1]}.${parts[2]}.';
+                for (final host in [
+                  182, // عنوان الحاسوب الحالي النشط (Computer IP)
+                  100,
+                  101,
+                  102,
+                  105,
+                  110,
+                  2,
+                  10,
+                  50,
+                  200,
+                  252,
+                ]) {
+                  candidates.add('http://$prefix$host/yusr_api/index.php');
+                  candidates.add('http://$prefix$host:8000/api/legacy');
+                }
+              }
+            }
+          }
+        }
+      } catch (_) {}
+
+      final candidateList = candidates.toList();
+
+      // 4. إطلاق فحص سريع متزامن يتوقف فور نجاح أول عنوان (Race / First Success)
+      final completer = Completer<String?>();
+      int remaining = candidateList.length;
+
+      for (final url in candidateList) {
+        _pingSingleUrl(url)
+            .then((isWorking) {
+              if (isWorking && !completer.isCompleted) {
+                completer.complete(url);
+              }
+            })
+            .catchError((_) {})
+            .whenComplete(() {
+              remaining--;
+              if (remaining == 0 && !completer.isCompleted) {
+                completer.complete(null);
+              }
+            });
+      }
+
+      final winner = await completer.future.timeout(
+        const Duration(seconds: 6),
+        onTimeout: () => null,
+      );
+
+      if (winner != null) {
+        _workingUrl = winner;
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('last_working_url', winner);
+        } catch (_) {}
+        _isDiscovering = false;
+        return winner;
+      }
+    } catch (_) {}
+
+    _isDiscovering = false;
+    return _workingUrl;
+  }
+
+  Future<bool> _pingSingleUrl(String url) async {
+    try {
+      final uri = Uri.parse(url);
+      final req = await _client.postUrl(uri);
+      req.headers.contentType = ContentType.json;
+      req.write(jsonEncode({'action': 'ping'}));
+      final res = await req.close().timeout(const Duration(seconds: 4));
+      final body = await res.transform(utf8.decoder).join();
+      if (body.contains('"status":"success"') ||
+          body.contains('yusr_application') ||
+          body.contains('Laravel')) {
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /// التحقق السريع من صحة الاتصال
+  Future<bool> isConnected() async {
+    try {
+      final res = await testConnection();
+      return res['status'] == 'success';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  List<String> get _orderedUrls {
+    if (_workingUrl != null) {
+      return [_workingUrl!, ..._candidateUrls.where((u) => u != _workingUrl)];
+    }
+    return _candidateUrls;
+  }
+
+  /// فحص الاتصال بقاعدة البيانات yusr_application
+  Future<Map<String, dynamic>> testConnection() async {
+    return _sendRequest({'action': 'ping'});
+  }
+
+  // ==================== مصادقة مقدم الرعاية ====================
+
+  /// تسجيل مقدم الرعاية (جدول caregivers)
+  Future<Map<String, dynamic>> registerCaregiver({
+    required String name,
+    required String phone,
+    required String relationship,
+    String email = '',
+    String password = '',
+  }) async {
+    return _sendRequest({
+      'action': 'register_caregiver',
+      'C_Name': name,
+      'C_PhonNumber': phone,
+      'C_Relationship': relationship,
+      'C_Email': email,
+      'C_Password': password,
+    });
+  }
+
+  /// تسجيل دخول مقدم الرعاية برقم الهاتف أو البريد الإلكتروني
+  Future<Map<String, dynamic>> loginCaregiver({
+    required String phone,
+    String password = '',
+  }) async {
+    return _sendRequest({
+      'action': 'login_caregiver',
+      'C_PhonNumber': phone,
+      'C_Email': phone,
+      'C_Password': password,
+    });
+  }
+
+  /// جلب بيانات مقدم الرعاية من جدول caregivers
+  Future<Map<String, dynamic>?> getCaregiver(int id) async {
+    final res = await _sendRequest({
+      'action': 'get_caregiver',
+      'Caregivers_ID': id,
+    });
+    if (res['status'] == 'success' && res['data'] != null) {
+      return Map<String, dynamic>.from(res['data']);
+    }
+    return null;
+  }
+
+  /// تحديث بيانات مقدم الرعاية في جدول caregivers
+  Future<Map<String, dynamic>> updateCaregiver({
+    required int caregiverId,
+    required String name,
+    required String phone,
+    String email = '',
+    String relationship = '',
+  }) async {
+    return _sendRequest({
+      'action': 'update_caregiver',
+      'Caregivers_ID': caregiverId,
+      'C_Name': name,
+      'C_PhonNumber': phone,
+      'C_Email': email,
+      'C_Relationship': relationship,
+    });
+  }
+
+  // ==================== مصادقة وبيانات كبير السن ====================
+
+  /// تسجيل كبير السن (جدول elderly)
+  Future<Map<String, dynamic>> registerElderly({
+    required String name,
+    String sex = 'ذكر',
+    String phone = '',
+    String email = '',
+    String password = '',
+  }) async {
+    return _sendRequest({
+      'action': 'register_elderly',
+      'E_Name': name,
+      'E_sex': sex,
+      'E_PhonNumber': phone,
+      'E_Email': email,
+      'E_Password': password,
+    });
+  }
+
+  /// تسجيل دخول كبير السن برقم الهاتف أو البريد الإلكتروني
+  Future<Map<String, dynamic>> loginElderly({
+    required String phone,
+    String password = '',
+  }) async {
+    return _sendRequest({
+      'action': 'login_elderly',
+      'E_PhonNumber': phone,
+      'E_Email': phone,
+      'E_Password': password,
+    });
+  }
+
+  /// طلب استعادة كلمة المرور عبر البريد الإلكتروني
+  Future<Map<String, dynamic>> forgotPassword({
+    required String email,
+    String role = '',
+  }) async {
+    return _sendRequest({
+      'action': 'forgot_password',
+      'email': email,
+      'role': role,
+    });
+  }
+
+  /// جلب قائمة كبار السن المسجلين في قاعدة البيانات
+  Future<List<Map<String, dynamic>>> getElderlyList() async {
+    final res = await _sendRequest({'action': 'get_elderly'});
+    if (res['status'] == 'success' && res['data'] is List) {
+      return List<Map<String, dynamic>>.from(res['data']);
+    }
+    return [];
+  }
+
+  /// جلب بيانات كبير سن محدد بالمعرف
+  Future<Map<String, dynamic>?> getElderly(int id) async {
+    final res = await _sendRequest({'action': 'get_elderly', 'Eldery_ID': id});
+    if (res['status'] == 'success' && res['data'] != null) {
+      return Map<String, dynamic>.from(res['data']);
+    }
+    return null;
+  }
+
+  /// تحديث بيانات كبير السن في قاعدة البيانات
+  Future<Map<String, dynamic>> updateElderly({
+    required int elderlyId,
+    required String name,
+    required String sex,
+    required String phone,
+  }) async {
+    return _sendRequest({
+      'action': 'update_elderly',
+      'Eldery_ID': elderlyId,
+      'E_Name': name,
+      'E_sex': sex,
+      'E_PhonNumber': phone,
+    });
+  }
+
+  /// ربط مقدم الرعاية بكبير السن في قاعدة البيانات
+  Future<Map<String, dynamic>> linkElderly({
+    required int caregiverId,
+    required int elderlyId,
+  }) async {
+    return _sendRequest({
+      'action': 'link_elderly',
+      'Caregivers_ID': caregiverId,
+      'Eldery_ID': elderlyId,
+    });
+  }
+
+  // ==================== الأدوية (medications) ====================
+
+  /// جلب الأدوية من قاعدة البيانات
+  Future<List<Map<String, dynamic>>> getMedications({int? elderlyId}) async {
+    final body = <String, dynamic>{'action': 'get_medications'};
+    if (elderlyId != null) body['Elderly_ID'] = elderlyId;
+    final res = await _sendRequest(body);
+    if (res['status'] == 'success' && res['data'] is List) {
+      return List<Map<String, dynamic>>.from(res['data']);
+    }
+    return [];
+  }
+
+  /// إضافة دواء إلى قاعدة البيانات
+  Future<Map<String, dynamic>> addMedication({
+    required String name,
+    required String dose,
+    required String repeatTime,
+    int? elderlyId,
+  }) async {
+    return _sendRequest({
+      'action': 'add_medication',
+      'M_Name': name,
+      'M_much': dose,
+      'M_RepatTime': repeatTime,
+      'Elderly_ID': elderlyId,
+    });
+  }
+
+  /// حذف دواء من قاعدة البيانات
+  Future<Map<String, dynamic>> deleteMedication(int medicationId) async {
+    return _sendRequest({
+      'action': 'delete_medication',
+      'Medicayion_ID': medicationId,
+    });
+  }
+
+  /// تحديث دواء موجود في قاعدة البيانات
+  Future<Map<String, dynamic>> updateMedication({
+    required int medicationId,
+    required String name,
+    required String dose,
+    required String repeatTime,
+  }) async {
+    return _sendRequest({
+      'action': 'update_medication',
+      'Medicayion_ID': medicationId,
+      'M_Name': name,
+      'M_much': dose,
+      'M_RepatTime': repeatTime,
+    });
+  }
+
+  // ==================== المواعيد (appointments) ====================
+
+  /// جلب المواعيد من قاعدة البيانات
+  Future<List<Map<String, dynamic>>> getAppointments({int? elderlyId}) async {
+    final body = <String, dynamic>{'action': 'get_appointments'};
+    if (elderlyId != null) body['Elderly_ID'] = elderlyId;
+    final res = await _sendRequest(body);
+    if (res['status'] == 'success' && res['data'] is List) {
+      return List<Map<String, dynamic>>.from(res['data']);
+    }
+    return [];
+  }
+
+  /// إضافة موعد جديد إلى قاعدة البيانات
+  Future<Map<String, dynamic>> addAppointment({
+    required String date,
+    required String time,
+    required String dateType,
+    required String location,
+    String note = '',
+    int? elderlyId,
+  }) async {
+    return _sendRequest({
+      'action': 'add_appointment',
+      'A_Date': date,
+      'A_Time': time,
+      'A_DateType': dateType,
+      'A_Location': location,
+      'A_Note': note,
+      'Elderly_ID': elderlyId,
+    });
+  }
+
+  /// حذف موعد من قاعدة البيانات
+  Future<Map<String, dynamic>> deleteAppointment(int appointmentId) async {
+    return _sendRequest({
+      'action': 'delete_appointment',
+      'Appointment_ID': appointmentId,
+    });
+  }
+
+  // ==================== جهات اتصال الطوارئ (emergency_contacts) ====================
+
+  /// جلب جهات الاتصال من قاعدة البيانات
+  Future<List<Map<String, dynamic>>> getEmergencyContacts({
+    int? elderlyId,
+  }) async {
+    final body = <String, dynamic>{'action': 'get_emergency_contacts'};
+    if (elderlyId != null) body['Eldery_ID'] = elderlyId;
+    final res = await _sendRequest(body);
+    if (res['status'] == 'success' && res['data'] is List) {
+      return List<Map<String, dynamic>>.from(res['data']);
+    }
+    return [];
+  }
+
+  /// إضافة جهة اتصال طوارئ
+  Future<Map<String, dynamic>> addEmergencyContact({
+    required String name,
+    required String phone,
+    required String relationship,
+    int priority = 1,
+    int? elderlyId,
+  }) async {
+    return _sendRequest({
+      'action': 'add_emergency_contact',
+      'contact_Name': name,
+      'Phone_Number': phone,
+      'Relationship': relationship,
+      'Priority': priority,
+      'Eldery_ID': elderlyId,
+    });
+  }
+
+  /// حذف جهة اتصال طوارئ
+  Future<Map<String, dynamic>> deleteEmergencyContact(int contactId) async {
+    return _sendRequest({
+      'action': 'delete_emergency_contact',
+      'contact_ID': contactId,
+    });
+  }
+
+  // ==================== الأجهزة (devices) ====================
+
+  /// جلب الأجهزة المرتبطة بكبير السن من قاعدة البيانات
+  Future<List<Map<String, dynamic>>> getDevices({int? elderlyId}) async {
+    final body = <String, dynamic>{'action': 'get_devices'};
+    if (elderlyId != null) body['Elderly_ID'] = elderlyId;
+    final res = await _sendRequest(body);
+    if (res['status'] == 'success' && res['data'] is List) {
+      return List<Map<String, dynamic>>.from(res['data']);
+    }
+    return [];
+  }
+
+  /// إضافة جهاز إلى جدول devices
+  Future<Map<String, dynamic>> addDevice({
+    String? type,
+    String? number,
+    String? deviceType,
+    String? deviceName,
+    String? status,
+    int? elderlyId,
+  }) async {
+    final finalType = deviceType ?? type ?? deviceName ?? 'ساعة ذكية';
+    final finalNumber = number ?? deviceName ?? 'YS-WATCH-1';
+    final res = await _sendRequest({
+      'action': 'add_device',
+      'D_Type': finalType,
+      'T_Number': finalNumber,
+      'Elderly_ID': elderlyId,
+    });
+    return {...res, 'success': res['status'] == 'success'};
+  }
+
+  /// فك اقتران أو حذف جهاز من قاعدة البيانات
+  Future<Map<String, dynamic>> deleteDevice({
+    int? deviceId,
+    int? elderlyId,
+  }) async {
+    final res = await _sendRequest({
+      'action': 'delete_device',
+      'Devices_ID': deviceId,
+      'Elderly_ID': elderlyId,
+    });
+    return {...res, 'success': res['status'] == 'success'};
+  }
+
+  // ==================== المؤشرات الحيوية والصحة (health_monitoring) ====================
+
+  /// جلب سجلات المراقبة الصحية
+  Future<List<Map<String, dynamic>>> getHealthRecords({int? elderlyId}) async {
+    final body = <String, dynamic>{'action': 'get_health_monitoring'};
+    if (elderlyId != null) body['Elderly_ID'] = elderlyId;
+    final res = await _sendRequest(body);
+    if (res['status'] == 'success' && res['data'] is List) {
+      return List<Map<String, dynamic>>.from(res['data']);
+    }
+    return [];
+  }
+
+  /// إضافة سجل مؤشرات حيوية جديد
+  Future<Map<String, dynamic>> addHealthRecord({
+    int? heartRate,
+    String? bloodPressure,
+    int? oxygen,
+    double? temperature,
+    int? steps,
+    String? type,
+    String? result,
+    int? elderlyId,
+  }) async {
+    return _sendRequest({
+      'action': 'add_health_record',
+      'Heart_Rate': heartRate,
+      'Blood_pressure': bloodPressure,
+      'Oxyger': oxygen,
+      'Temperature': temperature,
+      'steps': steps,
+      'H_Type': type ?? 'فحص عام',
+      'H_Result': result ?? 'طبيعي',
+      'Elderly_ID': elderlyId,
+    });
+  }
+
+  // ==================== الموقع الجغرافي (location_tracking) ====================
+
+  /// جلب موقع كبير السن
+  Future<dynamic> getLocation({int? elderlyId}) async {
+    final body = <String, dynamic>{'action': 'get_location'};
+    if (elderlyId != null) body['Elderly_ID'] = elderlyId;
+    final res = await _sendRequest(body);
+    return res['data'];
+  }
+
+  /// تحديث الموقع الجغرافي لكبير السن في جدول location_tracking
+  Future<Map<String, dynamic>> updateLocation({
+    required int elderlyId,
+    required double latitude,
+    required double longitude,
+    String location = '',
+  }) async {
+    return _sendRequest({
+      'action': 'update_location',
+      'Elderly_ID': elderlyId,
+      'latitude': latitude,
+      'Longitude': longitude,
+      'E_Location': location,
+    });
+  }
+
+  // ==================== التنبيهات (notifications) ====================
+
+  /// جلب التنبيهات
+  Future<List<Map<String, dynamic>>> getNotifications({
+    int? elderlyId,
+    int? caregiverId,
+  }) async {
+    final body = <String, dynamic>{'action': 'get_notifications'};
+    if (elderlyId != null) body['Eldery_ID'] = elderlyId;
+    if (caregiverId != null) body['Caregiver_ID'] = caregiverId;
+    final res = await _sendRequest(body);
+    if (res['status'] == 'success' && res['data'] is List) {
+      return List<Map<String, dynamic>>.from(res['data']);
+    }
+    return [];
+  }
+
+  /// إضافة تنبيه جديد إلى قاعدة البيانات
+  Future<Map<String, dynamic>> addNotification({
+    required String title,
+    required String message,
+    String type = 'alert',
+    int? elderlyId,
+    int? caregiverId,
+  }) async {
+    return _sendRequest({
+      'action': 'add_notification',
+      'N_Title': title,
+      'N_Message': message,
+      'N_Type': type,
+      'Eldery_ID': elderlyId,
+    });
+  }
+
+  // ==================== سجلات الطوارئ والاستغاثة (emergency_log) ====================
+
+  /// جلب سجلات الطوارئ لكبير السن من قاعدة البيانات
+  Future<List<Map<String, dynamic>>> getEmergencyLog({int? elderlyId}) async {
+    final body = <String, dynamic>{'action': 'get_emergency_log'};
+    if (elderlyId != null) body['Elderly_ID'] = elderlyId;
+    final res = await _sendRequest(body);
+    if (res['status'] == 'success' && res['data'] is List) {
+      return List<Map<String, dynamic>>.from(res['data']);
+    }
+    return [];
+  }
+
+  /// الاسم البديل لجلب سجلات الطوارئ
+  Future<List<Map<String, dynamic>>> getEmergencyLogs({int? elderlyId}) =>
+      getEmergencyLog(elderlyId: elderlyId);
+
+  /// تسجيل استغاثة طوارئ جديدة في جدول emergency_log
+  Future<Map<String, dynamic>> addEmergencyLog({
+    String type = 'نداء استغاثة طارئ SOS',
+    String location = 'الموقع الحالي',
+    double? latitude,
+    double? longitude,
+    String state = 'نشط - قيد المتابعة',
+    String? status,
+    String description = 'تم إرسال نداء استغاثة فوري',
+    int? elderlyId,
+  }) async {
+    return _sendRequest({
+      'action': 'add_emergency_log',
+      'E_Type': type,
+      'E_Location': location,
+      'latitude': latitude,
+      'Longitude': longitude,
+      'E_State': status ?? state,
+      'Descripion': description,
+      'Elderly_ID': elderlyId,
+    });
+  }
+
+  /// تحديث حالة بلاغ الطوارئ (قيد المتابعة / تمت المعالجة)
+  Future<Map<String, dynamic>> updateEmergencyStatus({
+    required int emergencyId,
+    required String state,
+    String? note,
+  }) async {
+    final body = <String, dynamic>{
+      'action': 'update_emergency_status',
+      'Emergency_ID': emergencyId,
+      'E_State': state,
+    };
+    if (note != null && note.isNotEmpty) {
+      body['Descripion'] = note;
+    }
+    final res = await _sendRequest(body);
+    return {...res, 'success': res['status'] == 'success'};
+  }
+
+  // ==================== نوع الرعاية (type_of_care) ====================
+
+  /// جلب نوع الرعاية
+  Future<List<Map<String, dynamic>>> getTypeOfCare({
+    int? elderlyId,
+    int? caregiverId,
+  }) async {
+    final body = <String, dynamic>{'action': 'get_type_of_care'};
+    if (elderlyId != null) body['Eldery_ID'] = elderlyId;
+    if (caregiverId != null) body['Caregivers_ID'] = caregiverId;
+    final res = await _sendRequest(body);
+    if (res['status'] == 'success' && res['data'] is List) {
+      return List<Map<String, dynamic>>.from(res['data']);
+    }
+    return [];
+  }
+
+  /// إضافة نوع رعاية جديد
+  Future<Map<String, dynamic>> addTypeOfCare({
+    required String careType,
+    int? caregiverId,
+    int? elderlyId,
+  }) async {
+    return _sendRequest({
+      'action': 'add_type_of_care',
+      'Care_Type': careType,
+      'Caregivers_ID': caregiverId,
+      'Eldery_ID': elderlyId,
+    });
+  }
+
+  // ==================== سجل التحركات والموقع ====================
+
+  /// جلب سجل تحركات كبير السن
+  Future<List<Map<String, dynamic>>> getLocationHistory({
+    int? elderlyId,
+  }) async {
+    final body = <String, dynamic>{'action': 'get_location_history'};
+    if (elderlyId != null) body['Elderly_ID'] = elderlyId;
+    final res = await _sendRequest(body);
+    if (res['status'] == 'success' && res['data'] is List) {
+      return List<Map<String, dynamic>>.from(res['data']);
+    }
+    return [];
+  }
+
+  // ==================== الخدمات وطلبات الخدمات (services & services_request) ====================
+
+  /// جلب قائمة الخدمات المتاحة
+  Future<List<Map<String, dynamic>>> getServices() async {
+    final res = await _sendRequest({'action': 'get_services'});
+    if (res['status'] == 'success' && res['data'] is List) {
+      return List<Map<String, dynamic>>.from(res['data']);
+    }
+    return [];
+  }
+
+  /// تقديم طلب خدمة جديدة
+  Future<Map<String, dynamic>> requestService({
+    required int serviceId,
+    int? caregiverId,
+    int? elderlyId,
+    String note = '',
+  }) async {
+    return _sendRequest({
+      'action': 'request_service',
+      'Service_ID': serviceId,
+      'Caregivers_id': caregiverId,
+      'Elderly_ID': elderlyId,
+      'Requst_Note': note,
+    });
+  }
+
+  /// جلب طلبات الخدمات المقدمة
+  Future<List<Map<String, dynamic>>> getServiceRequests({
+    int? caregiverId,
+    int? elderlyId,
+  }) async {
+    final body = <String, dynamic>{'action': 'get_service_requests'};
+    if (caregiverId != null) body['Caregivers_id'] = caregiverId;
+    if (elderlyId != null) body['Elderly_ID'] = elderlyId;
+    final res = await _sendRequest(body);
+    if (res['status'] == 'success' && res['data'] is List) {
+      return List<Map<String, dynamic>>.from(res['data']);
+    }
+    return [];
+  }
+
+  // ==================== التنبيهات الصحية (health_alerts) ====================
+
+  /// جلب التنبيهات الصحية
+  Future<List<Map<String, dynamic>>> getHealthAlerts({int? elderlyId}) async {
+    final body = <String, dynamic>{'action': 'get_health_alerts'};
+    if (elderlyId != null) body['Elderly_ID'] = elderlyId;
+    final res = await _sendRequest(body);
+    if (res['status'] == 'success' && res['data'] is List) {
+      return List<Map<String, dynamic>>.from(res['data']);
+    }
+    return [];
+  }
+
+  /// تسجيل تنبيه صحي جديد
+  Future<Map<String, dynamic>> addHealthAlert({
+    required String type,
+    required String description,
+    String level = 'متوسط',
+    String status = 'نشط',
+    int? hRecordId,
+  }) async {
+    return _sendRequest({
+      'action': 'add_health_alert',
+      'A_Type': type,
+      'A_Description': description,
+      'A_Level': level,
+      'A_Status': status,
+      'H_Record_ID': hRecordId,
+    });
+  }
+
+  // ==================== المساعد الصوتي والذكاء الاصطناعي (Gemini) ====================
+
+  /// استدعاء المساعد الصوتي الذكي المدعوم بـ Gemini عبر خادم Laravel API
+  Future<Map<String, dynamic>> askAiVoiceAssistant({
+    required String prompt,
+    int? elderlyId,
+  }) async {
+    return _sendRequest({
+      'action': 'voice_assistant',
+      'prompt': prompt,
+      if (elderlyId != null) 'elderly_id': elderlyId,
+    });
+  }
+
+  // ==================== إرسال الطلب الداخلي ====================
+  Future<Map<String, dynamic>> _sendRequest(Map<String, dynamic> body) async {
+    // 1. إذا لم يتم تحديد خادم نشط بعد، قم بالكشف التلقائي
+    if (_workingUrl == null) {
+      await discoverWorkingServer();
+    }
+
+    dynamic lastError;
+
+    // 2. المحاولة على العناوين بالترتيب بدءاً من الخادم النشط
+    for (final url in _orderedUrls) {
+      try {
+        final uri = Uri.parse(url);
+        final request = await _client.postUrl(uri);
+        request.headers.contentType = ContentType.json;
+        request.write(jsonEncode(body));
+
+        final response = await request.close().timeout(
+          const Duration(seconds: 15),
+        );
+        final responseBody = await response.transform(utf8.decoder).join();
+
+        if (responseBody.isNotEmpty) {
+          final data = jsonDecode(responseBody) as Map<String, dynamic>;
+          _workingUrl = url;
+          return data;
+        }
+      } catch (e) {
+        lastError = e;
+        if (url == _workingUrl) {
+          _workingUrl = null; // إعادة الفحص عند انقطاع الاتصال
+        }
+      }
+    }
+
+    final bool isTimeout = lastError is TimeoutException ||
+        (lastError != null &&
+            lastError.toString().toLowerCase().contains('timed out'));
+    final String errorMsg = isTimeout
+        ? 'تعذّر الاتصال بالخادم (انتهت مهلة الانتظار)، يُرجى التحقق من اتصال الشبكة والمحاولة مرة أخرى'
+        : 'تعذّر الاتصال بالخادم، يُرجى التأكد من اتصال الهاتف بالشبكة والمحاولة مرة أخرى';
+
+    return {
+      'status': 'error',
+      'is_connection_error': true,
+      'error_type': 'connection_error',
+      'message': errorMsg,
+      'raw_error': '$lastError',
+      'hint':
+          'تأكد من تشغيل Apache و MySQL في XAMPP وتواجد الهاتف على نفس شبكة الحاسوب (192.168.8.182)',
+    };
+  }
+
+  /// نافذة منبثقة لإعداد وفحص الاتصال بالخادم وقاعدة البيانات من أي جهاز
+  static Future<void> showServerConfigDialog(BuildContext context) async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedUrl =
+        prefs.getString('custom_api_url') ?? _workingUrl ?? officeLANBaseUrl;
+    final controller = TextEditingController(text: savedUrl);
+
+    if (!context.mounted) return;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        bool isTesting = false;
+        String? testMessage;
+        bool? isSuccess;
+
+        return StatefulBuilder(
+          builder: (dialogCtx, setDialogState) {
+            return Directionality(
+              textDirection: TextDirection.rtl,
+              child: AlertDialog(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                title: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1B434D).withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(
+                        Icons.dns_rounded,
+                        color: Color(0xFF1B434D),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'إعدادات الاتصال بقاعدة البيانات',
+                        style: GoogleFonts.cairo(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: const Color(0xFF1B434D),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // شريط حالة الخادم النشط
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: (_workingUrl != null)
+                              ? Colors.green.shade50
+                              : Colors.orange.shade50,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: (_workingUrl != null)
+                                ? Colors.green.shade300
+                                : Colors.orange.shade300,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              _workingUrl != null
+                                  ? Icons.check_circle
+                                  : Icons.warning_amber_rounded,
+                              color: _workingUrl != null
+                                  ? Colors.green.shade700
+                                  : Colors.orange.shade800,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _workingUrl != null
+                                    ? 'متصل حالياً عبر:\n$_workingUrl'
+                                    : 'لم يتم التأكد من الاتصال بعد',
+                                style: GoogleFonts.cairo(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: _workingUrl != null
+                                      ? Colors.green.shade900
+                                      : Colors.orange.shade900,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      Text(
+                        'عنوان IP أو رابط الخادم:',
+                        style: GoogleFonts.cairo(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey.shade800,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      TextField(
+                        controller: controller,
+                        textDirection: TextDirection.ltr,
+                        decoration: InputDecoration(
+                          hintText: '192.168.0.252 أو الرابط الكامل',
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          prefixIcon: const Icon(Icons.link, size: 20),
+                        ),
+                        style: GoogleFonts.sourceCodePro(fontSize: 13),
+                      ),
+                      const SizedBox(height: 10),
+
+                      // خيارات سريعة شائعة
+                      Text(
+                        'عناوين شائعة وسريعة:',
+                        style: GoogleFonts.cairo(
+                          fontSize: 11,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          ActionChip(
+                            label: Text(
+                              'واي فاي الحالية (192.168.0.252)',
+                              style: GoogleFonts.cairo(fontSize: 11),
+                            ),
+                            onPressed: () => setDialogState(
+                              () => controller.text = '192.168.0.252',
+                            ),
+                          ),
+                          ActionChip(
+                            label: Text(
+                              'كابل USB (8080)',
+                              style: GoogleFonts.cairo(fontSize: 11),
+                            ),
+                            onPressed: () => setDialogState(
+                              () => controller.text = '127.0.0.1:8080',
+                            ),
+                          ),
+                          ActionChip(
+                            label: Text(
+                              'محاكي أندرويد (10.0.2.2)',
+                              style: GoogleFonts.cairo(fontSize: 11),
+                            ),
+                            onPressed: () => setDialogState(
+                              () => controller.text = '10.0.2.2',
+                            ),
+                          ),
+                          ActionChip(
+                            label: Text(
+                              'المحلي (localhost)',
+                              style: GoogleFonts.cairo(fontSize: 11),
+                            ),
+                            onPressed: () => setDialogState(
+                              () => controller.text = 'localhost',
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+
+                      if (testMessage != null)
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: isSuccess == true
+                                ? Colors.green.shade50
+                                : Colors.red.shade50,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: isSuccess == true
+                                  ? Colors.green.shade300
+                                  : Colors.red.shade300,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                isSuccess == true
+                                    ? Icons.check_circle
+                                    : Icons.error_outline,
+                                color: isSuccess == true
+                                    ? Colors.green
+                                    : Colors.red,
+                                size: 18,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  testMessage!,
+                                  style: GoogleFonts.cairo(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    color: isSuccess == true
+                                        ? Colors.green.shade800
+                                        : Colors.red.shade800,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                      // زر الكشف التلقائي
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: isTesting
+                              ? null
+                              : () async {
+                                  setDialogState(() {
+                                    isTesting = true;
+                                    testMessage =
+                                        'جاري البحث عن الخادم في الشبكة...';
+                                    isSuccess = null;
+                                  });
+                                  final discovered = await instance
+                                      .discoverWorkingServer();
+                                  setDialogState(() {
+                                    isTesting = false;
+                                    if (discovered != null) {
+                                      controller.text = discovered;
+                                      testMessage =
+                                          'تم العثور على الخادم بنجاح والاتصال به!';
+                                      isSuccess = true;
+                                    } else {
+                                      testMessage =
+                                          'تعذر العثور على خادم تلقائياً. يرجى إدخال عنوان IP يدوياً.';
+                                      isSuccess = false;
+                                    }
+                                  });
+                                },
+                          icon: const Icon(Icons.radar, size: 18),
+                          label: Text(
+                            'كشف تلقائي وبحث في الشبكة',
+                            style: GoogleFonts.cairo(fontSize: 13),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: Text('إغلاق', style: GoogleFonts.cairo()),
+                  ),
+                  ElevatedButton(
+                    onPressed: isTesting
+                        ? null
+                        : () async {
+                            setDialogState(() {
+                              isTesting = true;
+                              testMessage = 'جاري حفظ وتجربة الرابط...';
+                              isSuccess = null;
+                            });
+                            final ok = await instance.setCustomServer(
+                              controller.text,
+                            );
+                            setDialogState(() {
+                              isTesting = false;
+                              if (ok) {
+                                testMessage =
+                                    'تم الاتصال بقاعدة البيانات بنجاح وحفظ الإعدادات! 🎉';
+                                isSuccess = true;
+                              } else {
+                                testMessage =
+                                    'فشل الاتصال بالرابط المحدد. تأكد من تشغيل Apache و MySQL في XAMPP.';
+                                isSuccess = false;
+                              }
+                            });
+                          },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF1B434D),
+                      foregroundColor: Colors.white,
+                    ),
+                    child: Text(
+                      'حفظ واختبار',
+                      style: GoogleFonts.cairo(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}

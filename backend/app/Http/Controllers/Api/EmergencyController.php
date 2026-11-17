@@ -35,12 +35,14 @@ class EmergencyController extends Controller
     public function storeLog(Request $request)
     {
         $elderlyId = $request->input('Elderly_ID');
+        $type = $request->input('E_Type');
         $location = $request->input('E_Location', 'ظ…ظˆظ‚ط¹ ط؛ظٹط± ظ…ط­ط¯ط¯');
         $lat = $request->input('latitude');
         $lng = $request->input('Longitude');
         $desc = $request->input('Descripion', 'ظ†ط¯ط§ط، ط·ظˆط§ط±ط¦ ط¹ط§ط¬ظ„ ظ…ظ† ط§ظ„طھط·ط¨ظٹظ‚');
 
         $log = EmergencyLog::create([
+            'E_Type' => $type,
             'E_Time' => now()->format('H:i:s'),
             'E_Date' => now()->format('Y-m-d'),
             'E_Location' => $location,

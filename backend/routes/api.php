@@ -23,10 +23,12 @@ use App\Http\Controllers\Api\LegacyBridgeController;
 
 // 1. اختبار الاتصال والصحة (Health Check)
 Route::match(['get', 'post'], '/ping', function () {
+    $db = config('database.connections.mysql.database');
+
     return response()->json([
         'status' => 'success',
-        'message' => 'تم الاتصال بقاعدة البيانات yusr_application عبر Laravel API بنجاح!',
-        'database' => config('database.connections.mysql.database'),
+        'message' => 'تم الاتصال بقاعدة البيانات ' . $db . ' عبر Laravel API بنجاح!',
+        'database' => $db,
         'framework' => 'Laravel ' . app()->version(),
     ]);
 });

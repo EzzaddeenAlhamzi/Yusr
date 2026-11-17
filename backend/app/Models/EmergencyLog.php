@@ -15,6 +15,7 @@ class EmergencyLog extends Model
     public $timestamps = false;
 
     protected $fillable = [
+        'E_Type',
         'E_Time',
         'E_Date',
         'E_Location',

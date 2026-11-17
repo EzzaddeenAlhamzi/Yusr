@@ -32,6 +32,7 @@ migrate_working_dir/
 .pub-cache/
 .pub/
 /build/
+**/build/
 
 # Symbolication related
 app.*.symbols
@@ -43,3 +44,73 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+/android/local.properties
+*.keystore
+!debug.keystore
+
+# iOS / macOS local
+**/Pods/
+**/DerivedData/
+*.xcuserdata/
+**/xcuserdata/
+
+# --- Secrets & local env (P1.0) ---
+# Never commit real credentials. Keep .env.example tracked.
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.pem
+!backend/cacert.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+credentials.json
+service-account*.json
+google-services.json
+GoogleService-Info.plist
+
+# --- SQL dumps & backups (future + local) ---
+# NOTE: .gitignore does NOT untrack files already in git history.
+# Tracked dump yusr_application_backup.sql remains until a separate PO
+# deletion / history decision (PO-D02). Do NOT git rm without PO approval.
+*.sql
+*.sql.gz
+*.sql.bz2
+*.sql.xz
+*.sql.zip
+*.dump
+*.bak
+*.legacy_backup
+*backup*.sql
+*_backup.sql
+
+# --- Logs, temp, OS junk ---
+logs/
+*.log.*
+tmp/
+temp/
+*.tmp
+*.temp
+*.swp
+*~
+.cache/
+.DS_Store
+Thumbs.db
+
+# --- Node / package manager ---
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Coverage / test artifacts ---
+coverage/
+.nyc_output/
+.phpunit.result.cache
+.dart_tool/
+.packages

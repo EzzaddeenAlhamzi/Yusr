@@ -6,13 +6,40 @@
 /storage/*.key
 /vendor
 .env
+.env.*
+!.env.example
 .env.backup
 .env.production
 Homestead.json
 Homestead.yaml
 auth.json
-npm-debug.log
-yarn-error.log
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 /.fleet
 /.idea
 /.vscode
+
+# SQL dumps / backups (local lab only — never commit)
+# Already-tracked dumps elsewhere in the monorepo are NOT removed by ignore rules.
+*.sql
+*.sql.gz
+*.sql.bz2
+*.sql.xz
+*.dump
+*.bak
+*backup*.sql
+
+# Logs & temp
+/storage/logs/*.log
+*.log
+tmp/
+temp/
+*.tmp
+*.cache
+
+# Build / coverage artifacts
+/coverage
+.phpunit.result.cache
+/bootstrap/cache/*.php
+!/bootstrap/cache/.gitignore

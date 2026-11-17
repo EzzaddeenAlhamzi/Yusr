@@ -40,6 +40,15 @@ return [
             'driver' => 'session',
             'provider' => 'users',
         ],
+        // P1.1 foundation for Sanctum / future auth:sanctum (P1.2 wraps routes).
+        'caregiver' => [
+            'driver' => 'session',
+            'provider' => 'caregivers',
+        ],
+        'elderly' => [
+            'driver' => 'session',
+            'provider' => 'elderly',
+        ],
     ],
 
     /*
@@ -64,11 +73,14 @@ return [
             'driver' => 'eloquent',
             'model' => App\Models\User::class,
         ],
-
-        // 'users' => [
-        //     'driver' => 'database',
-        //     'table' => 'users',
-        // ],
+        'caregivers' => [
+            'driver' => 'eloquent',
+            'model' => App\Models\Caregiver::class,
+        ],
+        'elderly' => [
+            'driver' => 'eloquent',
+            'model' => App\Models\Elderly::class,
+        ],
     ],
 
     /*

@@ -59,6 +59,13 @@ class ApiService {
   /// جلب الرابط النشط حالياً
   static String? get workingUrl => _workingUrl;
 
+  /// Reset discovery state for unit tests only.
+  @visibleForTesting
+  static void resetDiscoveryStateForTest() {
+    _workingUrl = null;
+    _isDiscovering = false;
+  }
+
   /// تعيين عنوان خادم مخصص يدوياً (لأي شبكة أو جهاز جديد)
   Future<bool> setCustomServer(String ipOrUrl) async {
     String cleanUrl = ipOrUrl.trim();
@@ -94,31 +101,52 @@ class ApiService {
     return false;
   }
 
-  /// كشف الخادم النشط عبر فحص كل العناوين المرشحة وشبكة Wi-Fi المحلية بأقصى سرعة بالتوازي
-  Future<String?> discoverWorkingServer() async {
+  /// كشف الخادم النشط.
+  ///
+  /// If [custom_api_url] is configured and reachable, it wins **before** any
+  /// parallel candidate race (avoids :8000 beating lab :8088). When custom is
+  /// missing or unreachable, falls back to racing candidates.
+  ///
+  /// [ping] may be injected in unit tests; production uses [_pingSingleUrl].
+  Future<String?> discoverWorkingServer({
+    Future<bool> Function(String url)? ping,
+  }) async {
     if (_isDiscovering) return _workingUrl;
     _isDiscovering = true;
+    final doPing = ping ?? _pingSingleUrl;
 
     try {
-      final Set<String> candidates = {};
+      String? savedCustom;
+      String? lastWorking;
 
-      // 1. العنوان المخصص المحفوظ في تفضيلات المستخدم أولاً
       try {
         final prefs = await SharedPreferences.getInstance();
-        final savedCustom = prefs.getString('custom_api_url');
-        if (savedCustom != null && savedCustom.isNotEmpty) {
-          candidates.add(savedCustom);
-        }
-        final lastWorking = prefs.getString('last_working_url');
-        if (lastWorking != null && lastWorking.isNotEmpty) {
-          candidates.add(lastWorking);
-        }
+        savedCustom = prefs.getString('custom_api_url');
+        lastWorking = prefs.getString('last_working_url');
       } catch (_) {}
 
-      // 2. إضافة العناوين المرشحة الثابتة
+      // 1. Prefer reachable custom_api_url BEFORE racing candidates.
+      if (savedCustom != null && savedCustom.isNotEmpty) {
+        try {
+          if (await doPing(savedCustom)) {
+            _workingUrl = savedCustom;
+            try {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setString('last_working_url', savedCustom);
+            } catch (_) {}
+            _isDiscovering = false;
+            return savedCustom;
+          }
+        } catch (_) {}
+      }
+
+      // 2. Fallback race: last_working + static candidates + LAN probe.
+      final Set<String> candidates = {};
+      if (lastWorking != null && lastWorking.isNotEmpty) {
+        candidates.add(lastWorking);
+      }
       candidates.addAll(_candidateUrls);
 
-      // 3. استكشاف النطاق الفرعي لشبكة Wi-Fi المحلية ديناميكياً
       try {
         final interfaces = await NetworkInterface.list(
           type: InternetAddressType.IPv4,
@@ -131,7 +159,7 @@ class ApiService {
               if (parts.length == 4) {
                 final prefix = '${parts[0]}.${parts[1]}.${parts[2]}.';
                 for (final host in [
-                  182, // عنوان الحاسوب الحالي النشط (Computer IP)
+                  182,
                   100,
                   101,
                   102,
@@ -153,14 +181,22 @@ class ApiService {
         }
       } catch (_) {}
 
-      final candidateList = candidates.toList();
+      // Do not re-race a custom URL that already failed the prefer check.
+      if (savedCustom != null && savedCustom.isNotEmpty) {
+        candidates.remove(savedCustom);
+      }
 
-      // 4. إطلاق فحص سريع متزامن يتوقف فور نجاح أول عنوان (Race / First Success)
+      final candidateList = candidates.toList();
+      if (candidateList.isEmpty) {
+        _isDiscovering = false;
+        return _workingUrl;
+      }
+
       final completer = Completer<String?>();
       int remaining = candidateList.length;
 
       for (final url in candidateList) {
-        _pingSingleUrl(url)
+        doPing(url)
             .then((isWorking) {
               if (isWorking && !completer.isCompleted) {
                 completer.complete(url);
@@ -244,6 +280,13 @@ class ApiService {
     String email = '',
     String password = '',
   }) async {
+    if (password.trim().isEmpty) {
+      return {
+        'status': 'error',
+        'error_type': 'password_required',
+        'message': 'كلمة المرور مطلوبة لإنشاء الحساب',
+      };
+    }
     return _sendRequest({
       'action': 'register_caregiver',
       'C_Name': name,
@@ -259,6 +302,13 @@ class ApiService {
     required String phone,
     String password = '',
   }) async {
+    if (password.trim().isEmpty) {
+      return {
+        'status': 'error',
+        'error_type': 'wrong_password',
+        'message': 'كلمة المرور غير صحيحة، يرجى التأكد والمحاولة مرة أخرى',
+      };
+    }
     return _sendRequest({
       'action': 'login_caregiver',
       'C_PhonNumber': phone,
@@ -307,6 +357,13 @@ class ApiService {
     String email = '',
     String password = '',
   }) async {
+    if (password.trim().isEmpty) {
+      return {
+        'status': 'error',
+        'error_type': 'password_required',
+        'message': 'كلمة المرور مطلوبة لإنشاء الحساب',
+      };
+    }
     return _sendRequest({
       'action': 'register_elderly',
       'E_Name': name,
@@ -322,6 +379,13 @@ class ApiService {
     required String phone,
     String password = '',
   }) async {
+    if (password.trim().isEmpty) {
+      return {
+        'status': 'error',
+        'error_type': 'wrong_password',
+        'message': 'كلمة المرور غير صحيحة، يرجى التأكد والمحاولة مرة أخرى',
+      };
+    }
     return _sendRequest({
       'action': 'login_elderly',
       'E_PhonNumber': phone,

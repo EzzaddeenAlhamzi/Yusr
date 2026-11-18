@@ -16,21 +16,32 @@ class ApiService {
       'http://192.168.0.252/yusr_api/index.php';
   static const String officeLANPort8000 =
       'http://192.168.0.252:8000/api/legacy';
+  static const String officeLANPort8088 =
+      'http://192.168.0.252:8088/api/legacy';
   static const String baseUrl = 'http://localhost/yusr_api/index.php';
   static const String emulatorBaseUrl = 'http://10.0.2.2/yusr_api/index.php';
   static const String emulatorPort8000 = 'http://10.0.2.2:8000/api/legacy';
+  static const String emulatorPort8088 = 'http://10.0.2.2:8088/api/legacy';
   static const String loopbackBaseUrl = 'http://127.0.0.1/yusr_api/index.php';
   static const String loopbackPort8000 = 'http://127.0.0.1:8000/api/legacy';
+  /// Preferred lab artisan port when :8000 is reserved (e.g. YOGC).
+  static const String loopbackPort8088 = 'http://127.0.0.1:8088/api/legacy';
   static const String usbAdbBaseUrl =
       'http://127.0.0.1:8080/yusr_api/index.php';
   static const String usbAdbLocalhost =
       'http://localhost:8080/yusr_api/index.php';
+  static const String usbAdbPort8088 = 'http://127.0.0.1:8088/api/legacy';
 
   static final List<String> _candidateUrls = [
-    officeLANBaseUrl,   // http://192.168.0.252/yusr_api/index.php (Apache Gateway Port 80)
-    officeLANPort8000,  // http://192.168.0.252:8000/api/legacy (Laravel Direct Port 8000)
+    // Prefer dedicated Yusr lab port 8088 before :8000 (kickoff: never claim YOGC :8000).
+    loopbackPort8088,
+    officeLANPort8088,
+    officeLANBaseUrl, // http://192.168.0.252/yusr_api/index.php (Apache Gateway Port 80)
+    officeLANPort8000, // http://192.168.0.252:8000/api/legacy
     if (Platform.isAndroid) ...[
-      emulatorBaseUrl,  // http://10.0.2.2/yusr_api/index.php
+      emulatorPort8088,
+      usbAdbPort8088,
+      emulatorBaseUrl, // http://10.0.2.2/yusr_api/index.php
       emulatorPort8000, // http://10.0.2.2:8000/api/legacy
       usbAdbLocalhost,
     ],
@@ -54,7 +65,15 @@ class ApiService {
     if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
       cleanUrl = 'http://$cleanUrl';
     }
-    if (!cleanUrl.endsWith('index.php')) {
+    // Artisan lab on :8088 (or explicit /api/legacy) — do not force Apache yusr_api path.
+    final isLegacyArtisan = cleanUrl.contains('/api/legacy') ||
+        RegExp(r':8088(/|$)').hasMatch(cleanUrl);
+    if (isLegacyArtisan) {
+      cleanUrl = cleanUrl.replaceAll(RegExp(r'/+$'), '');
+      if (!cleanUrl.contains('/api/legacy')) {
+        cleanUrl = '$cleanUrl/api/legacy';
+      }
+    } else if (!cleanUrl.endsWith('index.php')) {
       if (!cleanUrl.endsWith('/')) cleanUrl = '$cleanUrl/';
       if (!cleanUrl.contains('yusr_api')) {
         cleanUrl = '${cleanUrl}yusr_api/index.php';
@@ -125,6 +144,7 @@ class ApiService {
                   252,
                 ]) {
                   candidates.add('http://$prefix$host/yusr_api/index.php');
+                  candidates.add('http://$prefix$host:8088/api/legacy');
                   candidates.add('http://$prefix$host:8000/api/legacy');
                 }
               }
@@ -1040,6 +1060,15 @@ class ApiService {
                             ),
                             onPressed: () => setDialogState(
                               () => controller.text = '192.168.0.252',
+                            ),
+                          ),
+                          ActionChip(
+                            label: Text(
+                              'كابل USB (8088 lab)',
+                              style: GoogleFonts.cairo(fontSize: 11),
+                            ),
+                            onPressed: () => setDialogState(
+                              () => controller.text = '127.0.0.1:8088',
                             ),
                           ),
                           ActionChip(

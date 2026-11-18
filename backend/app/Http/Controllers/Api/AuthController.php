@@ -468,4 +468,27 @@ class AuthController extends Controller
             'message' => 'تم إرسال رابط استعادة كلمة المرور إلى بريدك الإلكتروني بنجاح',
         ]);
     }
+
+    /**
+     * P1.2: revoke current Sanctum token (logout).
+     */
+    public function logout(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if ($user && method_exists($user, 'currentAccessToken')) {
+            $token = $user->currentAccessToken();
+            if ($token) {
+                $token->delete();
+            }
+        }
+        // Also clear any remaining tokens for this model (fail-closed logout).
+        if ($user && method_exists($user, 'tokens')) {
+            $user->tokens()->delete();
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'تم تسجيل الخروج بنجاح',
+        ]);
+    }
 }

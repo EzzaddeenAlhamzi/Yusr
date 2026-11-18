@@ -2,6 +2,8 @@
 
 namespace App\Exceptions;
 
+use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Auth\AuthenticationException;
 use Illuminate\Foundation\Exceptions\Handler as ExceptionHandler;
 use Throwable;
 
@@ -34,6 +36,8 @@ class Handler extends ExceptionHandler
         'current_password',
         'password',
         'password_confirmation',
+        'C_Password',
+        'E_Password',
     ];
 
     /**
@@ -43,6 +47,22 @@ class Handler extends ExceptionHandler
     {
         $this->reportable(function (Throwable $e) {
             //
+        });
+
+        $this->renderable(function (AuthenticationException $e, $request) {
+            return response()->json([
+                'status' => 'error',
+                'error_type' => 'unauthenticated',
+                'message' => 'يجب تسجيل الدخول للوصول إلى هذا المورد',
+            ], 401);
+        });
+
+        $this->renderable(function (AuthorizationException $e, $request) {
+            return response()->json([
+                'status' => 'error',
+                'error_type' => 'forbidden',
+                'message' => 'ليس لديك صلاحية للوصول إلى هذا المورد',
+            ], 403);
         });
     }
 }

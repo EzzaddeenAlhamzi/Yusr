@@ -3,50 +3,68 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Caregiver;
 use App\Models\Service;
 use App\Models\ServiceRequest;
 use App\Models\TypeOfCare;
+use App\Support\YusrAccess;
 use Illuminate\Http\Request;
 
 class ServiceController extends Controller
 {
-    /**
-     * ظ‚ط§ط¦ظ…ط© ط§ظ„ط®ط¯ظ…ط§طھ ط§ظ„ظ…طھط§ط­ط©
-     */
     public function getServices()
     {
         $services = Service::all()->map(function ($s) {
             return [
-                'Service_ID'    => $s->Service_ID,
-                'S_Name'        => $s->S_Name,
-                'Service_Name'  => $s->S_Name,        // alias ظ„ظ„طھظˆط§ظپظ‚ ظ…ط¹ Flutter
-                'S_Type'        => $s->S_Type,
+                'Service_ID' => $s->Service_ID,
+                'S_Name' => $s->S_Name,
+                'Service_Name' => $s->S_Name,
+                'S_Type' => $s->S_Type,
                 'S_Description' => $s->S_Description,
-                'Description'   => $s->S_Description, // alias ظ„ظ„طھظˆط§ظپظ‚ ظ…ط¹ Flutter
-                'S_Status'      => $s->S_Status,
-                'Admin_ID'      => $s->Admin_ID,
+                'Description' => $s->S_Description,
+                'S_Status' => $s->S_Status,
+                'Admin_ID' => $s->Admin_ID,
             ];
         });
 
         return response()->json([
             'status' => 'success',
-            'data'   => $services
+            'data' => $services,
         ]);
     }
 
-    /**
-     * طھظ‚ط¯ظٹظ… ط·ظ„ط¨ ط®ط¯ظ…ط©
-     */
     public function requestService(Request $request)
     {
+        $actor = YusrAccess::requireActor($request);
+        if ($actor instanceof \Illuminate\Http\JsonResponse) {
+            return $actor;
+        }
+
         $serviceId = $request->input('Service_ID');
-        $caregiverId = $request->input('Caregivers_id');
-        $elderlyId = $request->input('Elderly_ID');
         $note = $request->input('Requst_Note', '');
+
+        if ($actor instanceof Caregiver) {
+            $caregiverId = (int) $actor->Caregivers_ID;
+            $gated = YusrAccess::gateElderly($request, YusrAccess::resolveElderlyId($request), true);
+            if ($gated instanceof \Illuminate\Http\JsonResponse) {
+                return $gated;
+            }
+            $elderlyId = $gated;
+        } else {
+            $elderlyId = (int) $actor->Eldery_ID;
+            $caregiverId = $request->input('Caregivers_id');
+            if ($caregiverId !== null && $caregiverId !== '' && ! YusrAccess::canViewCaregiver($actor, $caregiverId)) {
+                return YusrAccess::forbidden('غير مصرح بربط طلب الخدمة بمقدم رعاية غير مرتبط');
+            }
+            if ($caregiverId === null || $caregiverId === '') {
+                $linked = Caregiver::query()->where('Eldery_ID', $elderlyId)->value('Caregivers_ID');
+                $caregiverId = $linked;
+            }
+        }
 
         $req = ServiceRequest::create([
             'Requst_Date' => now()->format('Y-m-d'),
-            'Requst_Status' => 'ظ‚ظٹط¯ ط§ظ„ط§ظ†طھط¸ط§ط±',
+            'Requst_Status' => 'قيد الانتظار',
             'Requst_Note' => $note,
             'Service_ID' => $serviceId,
             'Caregivers_id' => $caregiverId,
@@ -55,82 +73,118 @@ class ServiceController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'message' => 'طھظ… طھظ‚ط¯ظٹظ… ط·ظ„ط¨ ط§ظ„ط®ط¯ظ…ط© ط¨ظ†ط¬ط§ط­ ظˆظ‡ظˆ ظ‚ظٹط¯ ط§ظ„ظ…ط±ط§ط¬ط¹ط©',
-            'data' => $req
+            'message' => 'تم تقديم طلب الخدمة بنجاح وهو قيد المراجعة',
+            'data' => $req,
         ], 201);
     }
 
-    /**
-     * ط¬ظ„ط¨ ط·ظ„ط¨ط§طھ ط§ظ„ط®ط¯ظ…ط§طھ
-     */
     public function getServiceRequests(Request $request)
     {
-        $caregiverId = $request->query('Caregivers_id', $request->input('Caregivers_id'));
-        $elderlyId = $request->query('Elderly_ID', $request->input('Elderly_ID'));
+        $actor = YusrAccess::requireActor($request);
+        if ($actor instanceof \Illuminate\Http\JsonResponse) {
+            return $actor;
+        }
 
         $query = ServiceRequest::with('service');
-        if ($caregiverId) {
-            $query->where('Caregivers_id', $caregiverId);
-        }
-        if ($elderlyId) {
-            $query->where('Elderly_ID', $elderlyId);
+
+        if ($actor instanceof Caregiver) {
+            $elderlyIds = YusrAccess::accessibleElderlyIds($actor);
+            $query->where(function ($q) use ($actor, $elderlyIds) {
+                $q->where('Caregivers_id', $actor->Caregivers_ID);
+                if ($elderlyIds !== []) {
+                    $q->orWhereIn('Elderly_ID', $elderlyIds);
+                }
+            });
+        } else {
+            $query->where('Elderly_ID', $actor->Eldery_ID);
         }
 
         $requests = $query->orderBy('Service_Requst_ID', 'desc')->get();
 
         return response()->json([
             'status' => 'success',
-            'data' => $requests
+            'data' => $requests,
         ]);
     }
 
-    /**
-     * ط¬ظ„ط¨ ط£ظ†ظˆط§ط¹ ط§ظ„ط±ط¹ط§ظٹط© ط§ظ„ظ…ط­ط¯ط¯ط©
-     */
     public function getTypeOfCare(Request $request)
     {
-        $elderlyId = $request->query('elderly_id', $request->query('Elderly_ID', $request->input('elderly_id', $request->input('Elderly_ID'))));
-
-        $query = TypeOfCare::query();
-        if ($elderlyId) {
-            $query->where('Eldery_ID', $elderlyId);
+        $actor = YusrAccess::requireActor($request);
+        if ($actor instanceof \Illuminate\Http\JsonResponse) {
+            return $actor;
         }
 
-        $list = $query->orderBy('Tc_id', 'desc')->get();
+        $requested = YusrAccess::resolveElderlyId($request);
+        $allowed = YusrAccess::accessibleElderlyIds($actor);
+
+        if ($requested !== null) {
+            if (! in_array($requested, $allowed, true)) {
+                return YusrAccess::forbidden('غير مصرح بالوصول إلى أنواع الرعاية');
+            }
+            $scope = [$requested];
+        } else {
+            $scope = $allowed;
+        }
+
+        if ($scope === []) {
+            $list = collect();
+        } else {
+            $list = TypeOfCare::query()
+                ->whereIn('Eldery_ID', $scope)
+                ->orderBy('Tc_id', 'desc')
+                ->get();
+        }
 
         return response()->json([
             'status' => 'success',
-            'data' => $list
+            'data' => $list,
         ]);
     }
 
-    /**
-     * ط¥ط¶ط§ظپط© ظ†ظˆط¹ ط±ط¹ط§ظٹط©
-     */
     public function storeTypeOfCare(Request $request)
     {
-        $careType = trim($request->input('Care_Type', ''));
-        $caregiverId = $request->input('Caregivers_ID');
-        $elderlyId = $request->input('Eldery_ID', $request->input('Elderly_ID'));
+        $actor = YusrAccess::requireActor($request);
+        if ($actor instanceof \Illuminate\Http\JsonResponse) {
+            return $actor;
+        }
 
+        $careType = trim($request->input('Care_Type', ''));
         if (empty($careType)) {
             return response()->json([
                 'status' => 'error',
-                'message' => 'ظ†ظˆط¹ ط§ظ„ط±ط¹ط§ظٹط© ظ…ط·ظ„ظˆط¨'
+                'message' => 'نوع الرعاية مطلوب',
             ], 200);
+        }
+
+        $gated = YusrAccess::gateElderly(
+            $request,
+            YusrAccess::resolveElderlyId($request, $request->input('Eldery_ID')),
+            true
+        );
+        if ($gated instanceof \Illuminate\Http\JsonResponse) {
+            return $gated;
+        }
+
+        $caregiverId = $actor instanceof Caregiver
+            ? (int) $actor->Caregivers_ID
+            : $request->input('Caregivers_ID');
+
+        if ($actor instanceof \App\Models\Elderly && $caregiverId !== null && $caregiverId !== '') {
+            if (! YusrAccess::canViewCaregiver($actor, $caregiverId)) {
+                return YusrAccess::forbidden('غير مصرح بربط نوع الرعاية بمقدم رعاية غير مرتبط');
+            }
         }
 
         $item = TypeOfCare::create([
             'Care_Type' => $careType,
             'Caregivers_ID' => $caregiverId,
-            'Eldery_ID' => $elderlyId,
+            'Eldery_ID' => $gated,
         ]);
 
         return response()->json([
             'status' => 'success',
-            'message' => 'طھظ…طھ ط¥ط¶ط§ظپط© ظ†ظˆط¹ ط§ظ„ط±ط¹ط§ظٹط© ط¨ظ†ط¬ط§ط­',
-            'data' => $item
+            'message' => 'تمت إضافة نوع الرعاية بنجاح',
+            'data' => $item,
         ], 201);
     }
 }
-

@@ -5,41 +5,57 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\EmergencyContact;
 use App\Models\EmergencyLog;
+use App\Support\YusrAccess;
 use Illuminate\Http\Request;
 
 class EmergencyController extends Controller
 {
-    /**
-     * ط³ط¬ظ„ ط¨ظ„ط§ط؛ط§طھ ط§ظ„ط·ظˆط§ط±ط¦
-     */
     public function getLogs(Request $request)
     {
-        $elderlyId = $request->query('elderly_id', $request->query('Elderly_ID', $request->input('elderly_id', $request->input('Elderly_ID'))));
-
-        $query = EmergencyLog::with('elderly');
-        if ($elderlyId) {
-            $query->where('Elderly_ID', $elderlyId);
+        $actor = YusrAccess::requireActor($request);
+        if ($actor instanceof \Illuminate\Http\JsonResponse) {
+            return $actor;
         }
 
-        $logs = $query->orderBy('Emergency_ID', 'desc')->get();
+        $requested = YusrAccess::resolveElderlyId($request);
+        $allowed = YusrAccess::accessibleElderlyIds($actor);
+
+        if ($requested !== null) {
+            if (! in_array($requested, $allowed, true)) {
+                return YusrAccess::forbidden('غير مصرح بالوصول إلى بلاغات الطوارئ');
+            }
+            $scope = [$requested];
+        } else {
+            $scope = $allowed;
+        }
+
+        if ($scope === []) {
+            $logs = collect();
+        } else {
+            $logs = EmergencyLog::with('elderly')
+                ->whereIn('Elderly_ID', $scope)
+                ->orderBy('Emergency_ID', 'desc')
+                ->get();
+        }
 
         return response()->json([
             'status' => 'success',
-            'data' => $logs
+            'data' => $logs,
         ]);
     }
 
-    /**
-     * ط¥ط±ط³ط§ظ„ ط¨ظ„ط§ط؛ ط·ظˆط§ط±ط¦ ط¬ط¯ظٹط¯
-     */
     public function storeLog(Request $request)
     {
-        $elderlyId = $request->input('Elderly_ID');
+        $gated = YusrAccess::gateElderly($request, YusrAccess::resolveElderlyId($request), true);
+        if ($gated instanceof \Illuminate\Http\JsonResponse) {
+            return $gated;
+        }
+
         $type = $request->input('E_Type');
-        $location = $request->input('E_Location', 'ظ…ظˆظ‚ط¹ ط؛ظٹط± ظ…ط­ط¯ط¯');
+        $location = $request->input('E_Location', 'موقع غير محدد');
         $lat = $request->input('latitude');
         $lng = $request->input('Longitude');
-        $desc = $request->input('Descripion', 'ظ†ط¯ط§ط، ط·ظˆط§ط±ط¦ ط¹ط§ط¬ظ„ ظ…ظ† ط§ظ„طھط·ط¨ظٹظ‚');
+        $desc = $request->input('Descripion', 'نداء طوارئ عاجل من التطبيق');
 
         $log = EmergencyLog::create([
             'E_Type' => $type,
@@ -48,89 +64,114 @@ class EmergencyController extends Controller
             'E_Location' => $location,
             'latitude' => $lat,
             'Longitude' => $lng,
-            'E_State' => 'ظ†ط´ط·',
+            'E_State' => 'نشط',
             'Descripion' => $desc,
-            'Elderly_ID' => $elderlyId,
+            'Elderly_ID' => $gated,
         ]);
 
         return response()->json([
             'status' => 'success',
-            'message' => 'طھظ… طھط³ط¬ظٹظ„ ط¨ظ„ط§ط؛ ط§ظ„ط·ظˆط§ط±ط¦ ط¨ظ†ط¬ط§ط­ ظˆط¥ط±ط³ط§ظ„ظ‡ ظپظˆط±ط§ظ‹ ظ„ظ…ظ‚ط¯ظ… ط§ظ„ط±ط¹ط§ظٹط©',
-            'data' => $log
+            'message' => 'تم تسجيل بلاغ الطوارئ بنجاح وإرساله فوراً لمقدم الرعاية',
+            'data' => $log,
         ], 201);
     }
 
-    /**
-     * طھط­ط¯ظٹط« ط­ط§ظ„ط© ط§ظ„ط¨ظ„ط§ط؛ (ظ‚ظٹط¯ ط§ظ„ظ…طھط§ط¨ط¹ط© / طھظ…طھ ط§ظ„ظ…ط¹ط§ظ„ط¬ط©)
-     */
     public function updateStatus(Request $request, $id = null)
     {
+        $actor = YusrAccess::requireActor($request);
+        if ($actor instanceof \Illuminate\Http\JsonResponse) {
+            return $actor;
+        }
+
         $emergencyId = $id ?? $request->input('Emergency_ID');
         $state = trim($request->input('E_State', ''));
         $note = trim($request->input('note', $request->input('Descripion', '')));
 
-        if (!$emergencyId || empty($state)) {
+        if (! $emergencyId || empty($state)) {
             return response()->json([
                 'status' => 'error',
-                'message' => 'ظ…ط¹ط±ظپ ط§ظ„ط¨ظ„ط§ط؛ ظˆط­ط§ظ„ط© ط§ظ„ظ…طھط§ط¨ط¹ط© ط§ظ„ط¬ط¯ظٹط¯ط© ظ…ط·ظ„ظˆط¨ط§ظ†'
+                'message' => 'معرف البلاغ وحالة المتابعة الجديدة مطلوبان',
             ], 200);
         }
 
         $emergency = EmergencyLog::find($emergencyId);
-        if (!$emergency) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'ط¨ظ„ط§ط؛ ط§ظ„ط·ظˆط§ط±ط¦ ط؛ظٹط± ظ…ظˆط¬ظˆط¯ ظپظٹ ظ‚ط§ط¹ط¯ط© ط§ظ„ط¨ظٹط§ظ†ط§طھ'
-            ], 200);
+        if (! $emergency) {
+            return YusrAccess::notFound('بلاغ الطوارئ غير موجود في قاعدة البيانات');
+        }
+
+        if (! YusrAccess::canAccessElderly($actor, $emergency->Elderly_ID)) {
+            return YusrAccess::forbidden('غير مصرح بتحديث حالة هذا البلاغ');
         }
 
         $updateData = ['E_State' => $state];
-        if (!empty($note)) {
-            $currentDesc = (string)$emergency->Descripion;
-            $updateData['Descripion'] = $currentDesc . " [ظ…ظ„ط§ط­ط¸ط©: {$note}]";
+        if (! empty($note)) {
+            $currentDesc = (string) $emergency->Descripion;
+            $updateData['Descripion'] = $currentDesc . " [ملاحظة: {$note}]";
         }
 
         $emergency->update($updateData);
 
         return response()->json([
             'status' => 'success',
-            'message' => "طھظ… طھط­ط¯ظٹط« ط­ط§ظ„ط© ط§ظ„ط¨ظ„ط§ط؛ ط¨ظ†ط¬ط§ط­ ط¥ظ„ظ‰: {$state}",
-            'data' => $emergency
+            'message' => "تم تحديث حالة البلاغ بنجاح إلى: {$state}",
+            'data' => $emergency,
         ]);
     }
 
-    /**
-     * ط¬ظ‡ط§طھ ط§طھطµط§ظ„ ط§ظ„ط·ظˆط§ط±ط¦
-     */
     public function getContacts(Request $request)
     {
-        $elderlyId = $request->query('elderly_id', $request->query('Elderly_ID', $request->input('elderly_id', $request->input('Elderly_ID'))));
-
-        $query = EmergencyContact::query();
-        if ($elderlyId) {
-            $query->where('Eldery_ID', $elderlyId);
+        $actor = YusrAccess::requireActor($request);
+        if ($actor instanceof \Illuminate\Http\JsonResponse) {
+            return $actor;
         }
 
-        $contacts = $query->orderBy('Priority', 'asc')->get();
+        $requested = YusrAccess::resolveElderlyId($request);
+        $allowed = YusrAccess::accessibleElderlyIds($actor);
+
+        if ($requested !== null) {
+            if (! in_array($requested, $allowed, true)) {
+                return YusrAccess::forbidden('غير مصرح بالوصول إلى جهات اتصال الطوارئ');
+            }
+            $scope = [$requested];
+        } else {
+            $scope = $allowed;
+        }
+
+        if ($scope === []) {
+            $contacts = collect();
+        } else {
+            $contacts = EmergencyContact::query()
+                ->whereIn('Eldery_ID', $scope)
+                ->orderBy('Priority', 'asc')
+                ->get();
+        }
 
         return response()->json([
             'status' => 'success',
-            'data' => $contacts
+            'data' => $contacts,
         ]);
     }
 
     public function storeContact(Request $request)
     {
+        $gated = YusrAccess::gateElderly(
+            $request,
+            YusrAccess::resolveElderlyId($request, $request->input('Eldery_ID')),
+            true
+        );
+        if ($gated instanceof \Illuminate\Http\JsonResponse) {
+            return $gated;
+        }
+
         $name = trim($request->input('contact_Name', ''));
         $phone = trim($request->input('Phone_Number', ''));
         $relationship = trim($request->input('Relationship', ''));
         $priority = $request->input('Priority', 1);
-        $elderlyId = $request->input('Eldery_ID', $request->input('Elderly_ID'));
 
         if (empty($name) || empty($phone)) {
             return response()->json([
                 'status' => 'error',
-                'message' => 'ط§ط³ظ… ط¬ظ‡ط© ط§ظ„ط§طھطµط§ظ„ ظˆط±ظ‚ظ… ط§ظ„ظ‡ط§طھظپ ظ…ط·ظ„ظˆط¨ط§ظ†'
+                'message' => 'اسم جهة الاتصال ورقم الهاتف مطلوبان',
             ], 200);
         }
 
@@ -139,34 +180,40 @@ class EmergencyController extends Controller
             'Phone_Number' => $phone,
             'Relationship' => $relationship,
             'Priority' => $priority,
-            'Eldery_ID' => $elderlyId,
+            'Eldery_ID' => $gated,
         ]);
 
         return response()->json([
             'status' => 'success',
-            'message' => 'طھظ…طھ ط¥ط¶ط§ظپط© ط¬ظ‡ط© ط§طھطµط§ظ„ ط§ظ„ط·ظˆط§ط±ط¦ ط¨ظ†ط¬ط§ط­',
-            'data' => $contact
+            'message' => 'تمت إضافة جهة اتصال الطوارئ بنجاح',
+            'data' => $contact,
         ], 201);
     }
 
     public function destroyContact($id = null, Request $request = null)
     {
-        $contactId = $id ?? ($request ? $request->input('contact_ID') : null);
+        $request = $request ?? request();
+        $actor = YusrAccess::requireActor($request);
+        if ($actor instanceof \Illuminate\Http\JsonResponse) {
+            return $actor;
+        }
+
+        $contactId = $id ?? $request->input('contact_ID');
         $contact = EmergencyContact::find($contactId);
 
-        if (!$contact) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'ط¬ظ‡ط© ط§ظ„ط§طھطµط§ظ„ ط؛ظٹط± ظ…ظˆط¬ظˆط¯ط©'
-            ], 200);
+        if (! $contact) {
+            return YusrAccess::notFound('جهة الاتصال غير موجودة');
+        }
+
+        if (! YusrAccess::canAccessElderly($actor, $contact->Eldery_ID)) {
+            return YusrAccess::forbidden('غير مصرح بحذف جهة الاتصال هذه');
         }
 
         $contact->delete();
 
         return response()->json([
             'status' => 'success',
-            'message' => 'طھظ… ط­ط°ظپ ط¬ظ‡ط© ط§طھطµط§ظ„ ط§ظ„ط·ظˆط§ط±ط¦ ط¨ظ†ط¬ط§ط­'
+            'message' => 'تم حذف جهة اتصال الطوارئ بنجاح',
         ]);
     }
 }
-

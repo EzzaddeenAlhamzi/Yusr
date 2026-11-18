@@ -1039,7 +1039,7 @@ class _MedicinesPageState extends State<MedicinesPage> {
                           style: GoogleFonts.cairo(fontSize: 11),
                         ),
                         value: reminderActive,
-                        activeColor: AppColors.mainColor,
+                        activeThumbColor: AppColors.mainColor,
                         onChanged: (v) =>
                             setDialogState(() => reminderActive = v),
                         contentPadding: EdgeInsets.zero,
@@ -1283,7 +1283,7 @@ class _MedicinesPageState extends State<MedicinesPage> {
                           style: GoogleFonts.cairo(fontSize: 11),
                         ),
                         value: reminderActive,
-                        activeColor: AppColors.mainColor,
+                        activeThumbColor: AppColors.mainColor,
                         onChanged: (v) =>
                             setDialogState(() => reminderActive = v),
                         contentPadding: EdgeInsets.zero,

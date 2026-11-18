@@ -1137,7 +1137,7 @@ class _SeniorDataPageState extends State<SeniorDataPage> {
           ),
           Switch(
             value: value,
-            activeColor: AppColors.mainColor,
+            activeThumbColor: AppColors.mainColor,
             onChanged: onChanged,
           ),
         ],
@@ -1293,7 +1293,7 @@ class _SeniorDataPageState extends State<SeniorDataPage> {
                   ),
                   const SizedBox(height: 10),
                   DropdownButtonFormField<String>(
-                    value: selectedGender,
+                    initialValue: selectedGender,
                     decoration: const InputDecoration(labelText: 'الجنس (E_sex)'),
                     items: const [
                       DropdownMenuItem(value: 'ذكر', child: Text('ذكر')),

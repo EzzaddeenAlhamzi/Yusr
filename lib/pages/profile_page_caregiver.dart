@@ -147,6 +147,7 @@ class _ProfilePageCaregiverState extends State<ProfilePageCaregiver> {
                       email: newEmail.isNotEmpty ? newEmail : _caregiverEmail,
                       relationship: _relationship,
                     );
+                    if (!mounted) return;
                     AuthService().setCaregiverSession(
                       id: id,
                       name: newName,
@@ -154,6 +155,7 @@ class _ProfilePageCaregiverState extends State<ProfilePageCaregiver> {
                       email: newEmail.isNotEmpty ? newEmail : _caregiverEmail,
                     );
                   }
+                  if (!ctx.mounted) return;
                   navigator.pop();
                 }
               },
@@ -608,7 +610,7 @@ class _ProfilePageCaregiverState extends State<ProfilePageCaregiver> {
           children: [
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              activeColor: AppColors.mainColor,
+              activeThumbColor: AppColors.mainColor,
               title: Text(
                 'تنبيهات الطوارئ الفورية',
                 style: GoogleFonts.cairo(
@@ -627,7 +629,7 @@ class _ProfilePageCaregiverState extends State<ProfilePageCaregiver> {
             const Divider(height: 20),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              activeColor: AppColors.mainColor,
+              activeThumbColor: AppColors.mainColor,
               title: Text(
                 'الدخول بالبصمة / الوجه',
                 style: GoogleFonts.cairo(
@@ -853,9 +855,15 @@ class _ProfilePageCaregiverState extends State<ProfilePageCaregiver> {
                     backgroundColor: Colors.red.shade600,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
-                  onPressed: () {
+                  onPressed: () async {
+                    final navigator = Navigator.of(context);
                     Navigator.pop(ctx);
-                    Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
+                    await AuthService().logout();
+                    if (!mounted) return;
+                    navigator.pushNamedAndRemoveUntil(
+                      '/login',
+                      (route) => false,
+                    );
                   },
                   child: Text(
                     'تسجيل الخروج',

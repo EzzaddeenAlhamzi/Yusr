@@ -99,6 +99,9 @@ class SimpleHomePage extends StatelessWidget {
               // 1. الشريط العلوي: بطارية على اليسار وساعة على اليمين
               _buildTopHeader(context),
 
+              // شريط واضح لرمز الربط بعد تسجيل الدخول (لا يمس شبكة SOS)
+              _buildLinkCodeEntry(context),
+
               // 2. شبكة الأزرار الستة
               Expanded(
                 child: Container(
@@ -210,130 +213,58 @@ class SimpleHomePage extends StatelessWidget {
   /// على اليسار: مستطيل البطارية وتحته "2026 أغسطس"
   /// في الوسط: زر التبديل إلى الوضع المتقدم
   /// على اليمين: "م 6:30"
+  ///
+  /// Responsive: Flexible + FittedBox — fixes RIGHT/HEIGHT OVERFLOWED BY 13 PIXELS
+  /// without Samsung-only hardcoded widths. Preserves SOS grid / visual identity.
   Widget _buildTopHeader(BuildContext context) {
-    return Container(
-      color: headerBackground,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          // اليسار: البطارية + "2026 أغسطس"
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildBatteryIcon(),
-              const SizedBox(height: 6),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    '2026',
-                    style: GoogleFonts.cairo(
-                      fontSize: 17,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    'أغسطس',
-                    style: GoogleFonts.cairo(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-
-          // الوسط: زر التبديل إلى الوضع المتقدم
-          InkWell(
-            onTap: () {
-              Navigator.pushNamedAndRemoveUntil(
-                context,
-                '/home-elderly',
-                (route) => false,
-              );
-            },
-            borderRadius: BorderRadius.circular(20),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF1F5F9),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: const Color(0xFFCBD5E1), width: 1.5),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.tune_rounded, size: 16, color: Color(0xFF334155)),
-                  const SizedBox(width: 4),
-                  Text(
-                    'الوضع المتقدم',
-                    style: GoogleFonts.cairo(
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                      color: const Color(0xFF334155),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          // اليمين: "م 6:30" على سطر واحد كما في الصورة
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
-            children: [
-              Text(
-                'م',
-                style: GoogleFonts.cairo(
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                '6:30',
-                style: GoogleFonts.cairo(
-                  fontSize: 44,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black,
-                  letterSpacing: -1.0,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
+    return SimpleHomeTopHeader(
+      onAdvancedMode: () {
+        Navigator.pushNamedAndRemoveUntil(
+          context,
+          '/home-elderly',
+          (route) => false,
+        );
+      },
     );
   }
 
-  /// رسمة مستطيل البطارية (إطار أسود وجزء أخضر في اليمين)
-  Widget _buildBatteryIcon() {
-    return Container(
-      width: 92,
-      height: 38,
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.black, width: 3.5),
-      ),
-      child: Align(
-        alignment: Alignment.centerRight,
-        child: Container(
-          width: 48,
-          decoration: BoxDecoration(
-            color: batteryGreen,
-            borderRadius: BorderRadius.circular(2),
+  /// مدخل إنتاجي لشاشة رمز الربط من الوضع البسيط (بعد المصادقة).
+  Widget _buildLinkCodeEntry(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Material(
+        color: const Color(0xFF125D73),
+        child: InkWell(
+          onTap: () {
+            Navigator.pushNamed(
+              context,
+              '/senior-link-code',
+              arguments: {
+                'mode': 'simple',
+                'role': 'senior',
+                'from': 'simple-home',
+              },
+            );
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Row(
+              children: [
+                const Icon(Icons.link_rounded, color: Colors.white, size: 32),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'رمز ربط العائلة',
+                    style: GoogleFonts.cairo(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const Icon(Icons.chevron_left, color: Colors.white, size: 28),
+              ],
+            ),
           ),
         ),
       ),
@@ -568,6 +499,174 @@ class _MedicineJarPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+/// شريط رأس الصفحة البسيطة — قابل للاختبار بدون كامل الشبكة.
+class SimpleHomeTopHeader extends StatelessWidget {
+  const SimpleHomeTopHeader({super.key, this.onAdvancedMode});
+
+  final VoidCallback? onAdvancedMode;
+
+  @override
+  Widget build(BuildContext context) {
+    final textScale = MediaQuery.textScalerOf(context).scale(1.0).clamp(1.0, 1.4);
+
+    return Container(
+      color: SimpleHomePage.headerBackground,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Flexible(
+                flex: 3,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const _BatteryIcon(),
+                      const SizedBox(height: 4),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '2026',
+                            style: GoogleFonts.cairo(
+                              fontSize: 17 * textScale,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            'أغسطس',
+                            style: GoogleFonts.cairo(
+                              fontSize: 20 * textScale,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Flexible(
+                flex: 3,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: InkWell(
+                    onTap: onAdvancedMode,
+                    borderRadius: BorderRadius.circular(20),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: const Color(0xFFCBD5E1),
+                          width: 1.5,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.tune_rounded,
+                            size: 16,
+                            color: Color(0xFF334155),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'الوضع المتقدم',
+                            style: GoogleFonts.cairo(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: const Color(0xFF334155),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Flexible(
+                flex: 3,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerRight,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      Text(
+                        'م',
+                        style: GoogleFonts.cairo(
+                          fontSize: 28 * textScale,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        '6:30',
+                        style: GoogleFonts.cairo(
+                          fontSize: 44 * textScale,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black,
+                          letterSpacing: -1.0,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _BatteryIcon extends StatelessWidget {
+  const _BatteryIcon();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 92,
+      height: 38,
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.black, width: 3.5),
+      ),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: Container(
+          width: 48,
+          decoration: BoxDecoration(
+            color: SimpleHomePage.batteryGreen,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// اسم بديل للتوافقية

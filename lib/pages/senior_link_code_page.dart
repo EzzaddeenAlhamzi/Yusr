@@ -6,7 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../core/services/api_service.dart';
 import '../core/services/auth_service.dart';
 
-/// الشاشة: "ربط الحساب بمقدم الرعاية" وعرض رمز الربط
+/// الشاشة: "ربط الحساب بمقدم الرعاية" وعرض رمز الربط المؤقت (6 أرقام / 10 دقائق)
 class SeniorLinkCodePage extends StatefulWidget {
   const SeniorLinkCodePage({super.key});
 
@@ -21,27 +21,71 @@ class SeniorLinkCodePage extends StatefulWidget {
 }
 
 class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
-  int _remainingSeconds = 60; // دقيقة واحدة فقط
+  static const int _ttlSeconds = 10 * 60;
+
+  int _remainingSeconds = _ttlSeconds;
   Timer? _timer;
   bool _isChecking = false;
+  bool _isLoadingCode = false;
+  String? _linkCode;
+  String? _errorMessage;
 
-  String get linkCode {
-    final id = AuthService().userId;
-    if (id != null && id > 0) {
-      return id.toString().padLeft(6, '0');
-    }
-    return '582416';
-  }
+  String get linkCode => _linkCode ?? '------';
 
   @override
   void initState() {
     super.initState();
-    _startTimer();
+    _fetchLinkingCode();
+  }
+
+  Future<void> _fetchLinkingCode() async {
+    setState(() {
+      _isLoadingCode = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final res = await ApiService.instance.generateLinkingCode();
+      if (!mounted) return;
+
+      if (res['status'] == 'success' && res['data'] is Map) {
+        final data = Map<String, dynamic>.from(res['data'] as Map);
+        final code = data['linking_code']?.toString() ?? '';
+        final expiresIn = int.tryParse(
+              data['expires_in_seconds']?.toString() ?? '',
+            ) ??
+            _ttlSeconds;
+
+        setState(() {
+          _linkCode = code.padLeft(6, '0').substring(0, 6);
+          _remainingSeconds = expiresIn.clamp(1, _ttlSeconds);
+          _isLoadingCode = false;
+        });
+        _startTimer();
+        return;
+      }
+
+      setState(() {
+        _isLoadingCode = false;
+        _errorMessage = res['message']?.toString() ??
+            'تعذر إنشاء رمز الربط، حاول مرة أخرى';
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingCode = false;
+        _errorMessage = 'تعذر إنشاء رمز الربط، حاول مرة أخرى';
+      });
+    }
   }
 
   void _startTimer() {
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
       if (_remainingSeconds > 0) {
         setState(() {
           _remainingSeconds--;
@@ -52,11 +96,8 @@ class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
     });
   }
 
-  void _resetTimer() {
-    setState(() {
-      _remainingSeconds = 60;
-    });
-    _startTimer();
+  Future<void> _refreshCode() async {
+    await _fetchLinkingCode();
   }
 
   @override
@@ -72,6 +113,7 @@ class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
   }
 
   void _proceedToSuccess() {
+    if (!mounted) return;
     final args = ModalRoute.of(context)?.settings.arguments;
     Navigator.pushNamed(context, '/senior-link-success', arguments: args);
   }
@@ -83,8 +125,8 @@ class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
       final myId = AuthService().userId;
       if (myId != null && myId > 0) {
         final elderly = await ApiService.instance.getElderly(myId);
+        if (!mounted) return;
         if (elderly != null && elderly['caregiver'] != null) {
-          if (!mounted) return;
           _proceedToSuccess();
           return;
         }
@@ -93,7 +135,7 @@ class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'لم يقم مقدم الرعاية بإدخال الرمز بعد في قاعدة البيانات. يمكنك الانتظار أو الضغط على "الربط لاحقاً".',
+            'لم يقم مقدم الرعاية بإدخال الرمز بعد. يمكنك الانتظار أو الضغط على "الربط لاحقاً".',
             textAlign: TextAlign.center,
             style: GoogleFonts.cairo(color: Colors.white),
           ),
@@ -120,7 +162,8 @@ class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
 
   /// تخطي عملية الربط والمتابعة بحالة "مقدم الرعاية غير مرتبط"
   void _pairLater() {
-    final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+    final args =
+        ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
     final isSimple = args?['mode'] == 'simple';
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -168,19 +211,18 @@ class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
       }
     } catch (_) {}
 
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'تمت مشاركة الرمز! بانتظار إدخال مقدم الرعاية للرمز للربط الحقيقي.',
-            textAlign: TextAlign.center,
-            style: GoogleFonts.cairo(color: Colors.white),
-          ),
-          backgroundColor: SeniorLinkCodePage.primaryTeal,
-          duration: const Duration(seconds: 3),
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'تمت مشاركة الرمز! بانتظار إدخال مقدم الرعاية للرمز للربط الحقيقي.',
+          textAlign: TextAlign.center,
+          style: GoogleFonts.cairo(color: Colors.white),
         ),
-      );
-    }
+        backgroundColor: SeniorLinkCodePage.primaryTeal,
+        duration: const Duration(seconds: 3),
+      ),
+    );
   }
 
   Future<void> _shareViaSms(BuildContext sheetContext) async {
@@ -201,23 +243,23 @@ class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
       }
     } catch (_) {}
 
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'تمت مشاركة الرمز عبر SMS! بانتظار إدخال مقدم الرعاية للرمز للربط.',
-            textAlign: TextAlign.center,
-            style: GoogleFonts.cairo(color: Colors.white),
-          ),
-          backgroundColor: SeniorLinkCodePage.primaryTeal,
-          duration: const Duration(seconds: 3),
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'تمت مشاركة الرمز عبر SMS! بانتظار إدخال مقدم الرعاية للرمز للربط.',
+          textAlign: TextAlign.center,
+          style: GoogleFonts.cairo(color: Colors.white),
         ),
-      );
-    }
+        backgroundColor: SeniorLinkCodePage.primaryTeal,
+        duration: const Duration(seconds: 3),
+      ),
+    );
   }
 
-  void _copyCodeOnly(BuildContext sheetContext) {
-    Clipboard.setData(ClipboardData(text: linkCode));
+  Future<void> _copyCodeOnly(BuildContext sheetContext) async {
+    await Clipboard.setData(ClipboardData(text: linkCode));
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -230,10 +272,26 @@ class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
       ),
     );
 
-    Navigator.pop(sheetContext);
+    if (sheetContext.mounted) {
+      Navigator.pop(sheetContext);
+    }
   }
 
   void _onShareCode() {
+    if (_linkCode == null || _remainingSeconds <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'أنشئ رمزاً صالحاً أولاً قبل المشاركة',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.cairo(color: Colors.white),
+          ),
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+      return;
+    }
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -254,7 +312,6 @@ class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // شريط السحب العلوي
                   Container(
                     width: 44,
                     height: 5,
@@ -264,8 +321,6 @@ class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
                     ),
                   ),
                   const SizedBox(height: 18),
-
-                  // عنوان النافذة
                   Text(
                     'مشاركة رمز الربط',
                     style: GoogleFonts.cairo(
@@ -284,8 +339,6 @@ class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
                     ),
                   ),
                   const SizedBox(height: 22),
-
-                  // خيار الواتساب
                   _buildShareOptionItem(
                     title: 'المشاركة عبر واتساب',
                     subtitle: 'إرسال الرمز مباشرة إلى محادثة واتساب',
@@ -294,10 +347,7 @@ class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
                     iconBgColor: const Color(0xFFE8F9EE),
                     onTap: () => _shareViaWhatsApp(bottomSheetContext),
                   ),
-
                   const SizedBox(height: 12),
-
-                  // خيار الرسائل النصية
                   _buildShareOptionItem(
                     title: 'المشاركة عبر الرسائل النصية (SMS)',
                     subtitle: 'إرسال الرمز كرسالة نصية قصيرة',
@@ -306,10 +356,7 @@ class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
                     iconBgColor: const Color(0xFFE3F2FD),
                     onTap: () => _shareViaSms(bottomSheetContext),
                   ),
-
                   const SizedBox(height: 12),
-
-                  // خيار نسخ الرمز
                   _buildShareOptionItem(
                     title: 'نسخ الرمز فقط',
                     subtitle: 'نسخ الرمز $linkCode إلى الحافظة يدوياً',
@@ -318,7 +365,6 @@ class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
                     iconBgColor: const Color(0xFFE6EFF1),
                     onTap: () => _copyCodeOnly(bottomSheetContext),
                   ),
-
                   const SizedBox(height: 14),
                 ],
               ),
@@ -409,8 +455,6 @@ class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     const SizedBox(height: 60),
-
-                    // العنوان الرئيسي
                     Text(
                       'ربط الحساب بمقدم الرعاية',
                       textAlign: TextAlign.center,
@@ -420,10 +464,7 @@ class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
                         color: SeniorLinkCodePage.textDark,
                       ),
                     ),
-
                     const SizedBox(height: 10),
-
-                    // النص التوضيحي
                     Text(
                       'اعط هذا الرمز لمقدم الرعاية ليتمكن\nمن الربط بحسابك',
                       textAlign: TextAlign.center,
@@ -433,10 +474,9 @@ class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
                         height: 1.5,
                       ),
                     ),
-
                     const SizedBox(height: 35),
 
-                    // صندوق رمز الربط
+                    // صندوق رمز الربط — نص كبير واضح
                     Container(
                       width: double.infinity,
                       height: 90,
@@ -444,25 +484,47 @@ class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
                         color: SeniorLinkCodePage.codeBoxColor,
                         borderRadius: BorderRadius.circular(16),
                       ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: linkCode.split('').map((digit) {
-                          return Text(
-                            digit,
-                            style: GoogleFonts.cairo(
-                              fontSize: 34,
-                              fontWeight: FontWeight.w900,
-                              color: SeniorLinkCodePage.primaryTeal,
-                              letterSpacing: 2,
+                      child: _isLoadingCode
+                          ? const Center(
+                              child: SizedBox(
+                                width: 28,
+                                height: 28,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.5,
+                                  color: SeniorLinkCodePage.primaryTeal,
+                                ),
+                              ),
+                            )
+                          : Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                              children: linkCode.split('').map((digit) {
+                                return Text(
+                                  digit,
+                                  style: GoogleFonts.cairo(
+                                    fontSize: 34,
+                                    fontWeight: FontWeight.w900,
+                                    color: SeniorLinkCodePage.primaryTeal,
+                                    letterSpacing: 2,
+                                  ),
+                                );
+                              }).toList(),
                             ),
-                          );
-                        }).toList(),
-                      ),
                     ),
 
-                    const SizedBox(height: 20),
+                    if (_errorMessage != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        _errorMessage!,
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.cairo(
+                          fontSize: 13.5,
+                          color: Colors.red.shade700,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
 
-                    // انتهاء الرمز
+                    const SizedBox(height: 20),
                     Text(
                       'سينتهي الرمز خلال',
                       style: GoogleFonts.cairo(
@@ -470,10 +532,7 @@ class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
                         color: SeniorLinkCodePage.textMuted,
                       ),
                     ),
-
                     const SizedBox(height: 4),
-
-                    // المؤقت الزمني (دقيقة واحدة)
                     Text(
                       _formattedTime,
                       style: GoogleFonts.cairo(
@@ -484,11 +543,10 @@ class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
                             : Colors.red.shade700,
                       ),
                     ),
-
-                    if (_remainingSeconds == 0) ...[
+                    if (_remainingSeconds == 0 || _errorMessage != null) ...[
                       const SizedBox(height: 6),
                       TextButton.icon(
-                        onPressed: _resetTimer,
+                        onPressed: _isLoadingCode ? null : _refreshCode,
                         icon: const Icon(Icons.refresh_rounded, size: 18),
                         label: Text(
                           'تحديث الرمز والمؤقت',
@@ -499,24 +557,29 @@ class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
                         ),
                       ),
                     ],
-
                     const SizedBox(height: 30),
-
-                    // أزرار الإجراءات
                     SizedBox(
                       width: double.infinity,
                       height: 50,
                       child: ElevatedButton.icon(
                         onPressed: _isChecking ? null : _checkPairingStatus,
-                        icon: _isChecking 
+                        icon: _isChecking
                             ? const SizedBox(
-                                width: 18, 
-                                height: 18, 
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
                               )
-                            : const Icon(Icons.check_circle_outline, color: Colors.white),
+                            : const Icon(
+                                Icons.check_circle_outline,
+                                color: Colors.white,
+                              ),
                         label: Text(
-                          _isChecking ? 'جارٍ التحقق...' : 'التحقق من اكتمال الربط',
+                          _isChecking
+                              ? 'جارٍ التحقق...'
+                              : 'التحقق من اكتمال الربط',
                           style: GoogleFonts.cairo(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
@@ -532,15 +595,16 @@ class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
                         ),
                       ),
                     ),
-
                     const SizedBox(height: 12),
-
                     SizedBox(
                       width: double.infinity,
                       height: 48,
                       child: OutlinedButton.icon(
                         onPressed: _onShareCode,
-                        icon: const Icon(Icons.share_rounded, color: SeniorLinkCodePage.primaryTeal),
+                        icon: const Icon(
+                          Icons.share_rounded,
+                          color: SeniorLinkCodePage.primaryTeal,
+                        ),
                         label: Text(
                           'مشاركة الرمز',
                           style: GoogleFonts.cairo(
@@ -550,16 +614,16 @@ class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
                           ),
                         ),
                         style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: SeniorLinkCodePage.primaryTeal),
+                          side: const BorderSide(
+                            color: SeniorLinkCodePage.primaryTeal,
+                          ),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
                         ),
                       ),
                     ),
-
                     const SizedBox(height: 10),
-
                     SizedBox(
                       width: double.infinity,
                       height: 44,
@@ -576,13 +640,10 @@ class _SeniorLinkCodePageState extends State<SeniorLinkCodePage> {
                         ),
                       ),
                     ),
-
                     const SizedBox(height: 16),
                   ],
                 ),
               ),
-
-              // زر الرجوع في الجهة اليسرى
               Positioned(
                 left: 16,
                 top: 8,

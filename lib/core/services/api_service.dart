@@ -6,11 +6,26 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import 'auth_service.dart';
+import 'token_storage.dart';
+
 /// خدمة الاتصال بقاعدة البيانات المحلية MySQL/phpMyAdmin عبر واجهة PHP و PDO
 /// ترتبط بـ db.php و index.php وتقبل الاتصال من أي جهاز أو شبكة
 class ApiService {
   ApiService._();
   static final ApiService instance = ApiService._();
+
+  /// Callback when API returns 401 (optional UI navigation hook).
+  static void Function()? onUnauthorized;
+
+  static bool _hooksWired = false;
+
+  /// Wire logout revoke hook once (avoids AuthService ↔ ApiService import cycles).
+  void _ensureAuthHooks() {
+    if (_hooksWired) return;
+    _hooksWired = true;
+    AuthService.remoteLogoutHook = logoutRemote;
+  }
 
   static const String officeLANBaseUrl =
       'http://192.168.0.252/yusr_api/index.php';
@@ -64,6 +79,80 @@ class ApiService {
   static void resetDiscoveryStateForTest() {
     _workingUrl = null;
     _isDiscovering = false;
+  }
+
+  /// Explicit trusted Yusr origins (scheme+host+port). Lab policy.
+  /// Bearer is attached only when origin matches AND path is a Yusr API path.
+  @visibleForTesting
+  static const Set<String> trustedBearerOrigins = {
+    'http://127.0.0.1:8088',
+    'http://localhost:8088',
+    'http://10.0.2.2:8088',
+    'http://192.168.0.252:8088',
+    // Apache yusr_api on default HTTP port 80
+    'http://127.0.0.1',
+    'http://localhost',
+    'http://10.0.2.2',
+    'http://192.168.0.252',
+    // USB ADB reverse (non-8000)
+    'http://127.0.0.1:8080',
+    'http://localhost:8080',
+  };
+
+  /// Build canonical origin string: scheme://host[:port] (omit default 80/443).
+  @visibleForTesting
+  static String? originOf(Uri uri) {
+    if (!uri.hasScheme || uri.host.isEmpty) return null;
+    final scheme = uri.scheme.toLowerCase();
+    if (scheme != 'http' && scheme != 'https') return null;
+    final host = uri.host.toLowerCase();
+    final port = uri.hasPort ? uri.port : (scheme == 'https' ? 443 : 80);
+    if ((scheme == 'http' && port == 80) || (scheme == 'https' && port == 443)) {
+      return '$scheme://$host';
+    }
+    return '$scheme://$host:$port';
+  }
+
+  /// Whether Authorization Bearer may be attached for [url].
+  /// Strict: scheme+host+port must match [trustedBearerOrigins]; path must be
+  /// `/api/legacy` or `yusr_api`. Never attaches to `:8000`, redirects' foreign
+  /// hosts, discovery noise, or misleading hostnames/paths/ports.
+  @visibleForTesting
+  static bool isTrustedBearerUrl(String url) {
+    final trimmed = url.trim();
+    if (trimmed.isEmpty) return false;
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null || !uri.hasScheme) return false;
+
+    // Reject userinfo (http://attacker@127.0.0.1:8088/...) and fragments tricks.
+    if (uri.userInfo.isNotEmpty) return false;
+
+    if (uri.port == 8000) return false;
+    if (RegExp(r':8000(/|$)').hasMatch(trimmed)) return false;
+
+    final origin = originOf(uri);
+    if (origin == null || !trustedBearerOrigins.contains(origin)) {
+      return false;
+    }
+
+    final path = uri.path.toLowerCase();
+    final isLegacy = path == '/api/legacy' || path.startsWith('/api/legacy/');
+    final isYusrApi = path.contains('yusr_api');
+    if (!isLegacy && !isYusrApi) return false;
+
+    // Lab artisan path must stay on :8088 (or other explicitly trusted non-80 origins).
+    if (isLegacy && uri.port == 8000) return false;
+
+    return true;
+  }
+
+  Future<void> _persistTokenFromAuthResponse(Map<String, dynamic> res) async {
+    _ensureAuthHooks();
+    if (res['status'] != 'success') return;
+    final token = res['token']?.toString();
+    if (token == null || token.isEmpty) return;
+    final role = res['role']?.toString();
+    await TokenStorage.instance.saveToken(token, role: role);
   }
 
   /// تعيين عنوان خادم مخصص يدوياً (لأي شبكة أو جهاز جديد)
@@ -287,14 +376,16 @@ class ApiService {
         'message': 'كلمة المرور مطلوبة لإنشاء الحساب',
       };
     }
-    return _sendRequest({
+    final res = await _sendRequest({
       'action': 'register_caregiver',
       'C_Name': name,
       'C_PhonNumber': phone,
       'C_Relationship': relationship,
       'C_Email': email,
       'C_Password': password,
-    });
+    }, attachBearer: false);
+    await _persistTokenFromAuthResponse(res);
+    return res;
   }
 
   /// تسجيل دخول مقدم الرعاية برقم الهاتف أو البريد الإلكتروني
@@ -309,12 +400,14 @@ class ApiService {
         'message': 'كلمة المرور غير صحيحة، يرجى التأكد والمحاولة مرة أخرى',
       };
     }
-    return _sendRequest({
+    final res = await _sendRequest({
       'action': 'login_caregiver',
       'C_PhonNumber': phone,
       'C_Email': phone,
       'C_Password': password,
-    });
+    }, attachBearer: false);
+    await _persistTokenFromAuthResponse(res);
+    return res;
   }
 
   /// جلب بيانات مقدم الرعاية من جدول caregivers
@@ -364,14 +457,16 @@ class ApiService {
         'message': 'كلمة المرور مطلوبة لإنشاء الحساب',
       };
     }
-    return _sendRequest({
+    final res = await _sendRequest({
       'action': 'register_elderly',
       'E_Name': name,
       'E_sex': sex,
       'E_PhonNumber': phone,
       'E_Email': email,
       'E_Password': password,
-    });
+    }, attachBearer: false);
+    await _persistTokenFromAuthResponse(res);
+    return res;
   }
 
   /// تسجيل دخول كبير السن برقم الهاتف أو البريد الإلكتروني
@@ -386,12 +481,14 @@ class ApiService {
         'message': 'كلمة المرور غير صحيحة، يرجى التأكد والمحاولة مرة أخرى',
       };
     }
-    return _sendRequest({
+    final res = await _sendRequest({
       'action': 'login_elderly',
       'E_PhonNumber': phone,
       'E_Email': phone,
       'E_Password': password,
-    });
+    }, attachBearer: false);
+    await _persistTokenFromAuthResponse(res);
+    return res;
   }
 
   /// طلب استعادة كلمة المرور عبر البريد الإلكتروني
@@ -403,7 +500,14 @@ class ApiService {
       'action': 'forgot_password',
       'email': email,
       'role': role,
-    });
+    }, attachBearer: false);
+  }
+
+  /// إبطال التوكن على الخادم (إن أمكن) — لا يرمي عند فشل الشبكة.
+  Future<void> logoutRemote() async {
+    try {
+      await _sendRequest({'action': 'logout'}, attachBearer: true);
+    } catch (_) {}
   }
 
   /// جلب قائمة كبار السن المسجلين في قاعدة البيانات
@@ -440,8 +544,26 @@ class ApiService {
     });
   }
 
-  /// ربط مقدم الرعاية بكبير السن في قاعدة البيانات
+  /// إنشاء رمز ربط مؤقت (كبير السن فقط — 6 أرقام، 10 دقائق)
+  Future<Map<String, dynamic>> generateLinkingCode() async {
+    return _sendRequest({'action': 'generate_linking_code'});
+  }
+
+  /// ربط مقدم الرعاية بكبير السن عبر رمز الربط المؤقت (ليس عبر المعرف المباشر)
   Future<Map<String, dynamic>> linkElderly({
+    required int caregiverId,
+    required String linkingCode,
+  }) async {
+    return _sendRequest({
+      'action': 'link_elderly',
+      'Caregivers_ID': caregiverId,
+      'linking_code': linkingCode,
+    });
+  }
+
+  /// @Deprecated — direct-ID linking is blocked server-side; use [linkElderly] with code.
+  @Deprecated('Use linkElderly with linkingCode')
+  Future<Map<String, dynamic>> linkElderlyById({
     required int caregiverId,
     required int elderlyId,
   }) async {
@@ -922,13 +1044,19 @@ class ApiService {
   }
 
   // ==================== إرسال الطلب الداخلي ====================
-  Future<Map<String, dynamic>> _sendRequest(Map<String, dynamic> body) async {
+  Future<Map<String, dynamic>> _sendRequest(
+    Map<String, dynamic> body, {
+    bool attachBearer = true,
+  }) async {
+    _ensureAuthHooks();
     // 1. إذا لم يتم تحديد خادم نشط بعد، قم بالكشف التلقائي
     if (_workingUrl == null) {
       await discoverWorkingServer();
     }
 
     dynamic lastError;
+    final token =
+        attachBearer ? await TokenStorage.instance.readToken() : null;
 
     // 2. المحاولة على العناوين بالترتيب بدءاً من الخادم النشط
     for (final url in _orderedUrls) {
@@ -936,12 +1064,48 @@ class ApiService {
         final uri = Uri.parse(url);
         final request = await _client.postUrl(uri);
         request.headers.contentType = ContentType.json;
+        request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+
+        // Bearer only on trusted Yusr API URLs — never :8000 / unrelated candidates.
+        if (attachBearer &&
+            token != null &&
+            token.isNotEmpty &&
+            isTrustedBearerUrl(url)) {
+          request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+        }
+
         request.write(jsonEncode(body));
 
         final response = await request.close().timeout(
           const Duration(seconds: 15),
         );
         final responseBody = await response.transform(utf8.decoder).join();
+
+        if (response.statusCode == 401) {
+          await TokenStorage.instance.clear();
+          AuthService().clearSessionLocal();
+          onUnauthorized?.call();
+          Map<String, dynamic> data = {
+            'status': 'error',
+            'error_type': 'unauthenticated',
+            'message': 'انتهت الجلسة، يرجى تسجيل الدخول مرة أخرى',
+            'http_status': 401,
+          };
+          if (responseBody.isNotEmpty) {
+            try {
+              final parsed = jsonDecode(responseBody);
+              if (parsed is Map<String, dynamic>) {
+                data = {
+                  ...parsed,
+                  'http_status': 401,
+                  'error_type':
+                      parsed['error_type'] ?? 'unauthenticated',
+                };
+              }
+            } catch (_) {}
+          }
+          return data;
+        }
 
         if (responseBody.isNotEmpty) {
           final data = jsonDecode(responseBody) as Map<String, dynamic>;

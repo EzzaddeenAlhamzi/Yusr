@@ -56,18 +56,19 @@ class LegacyBridgeController extends Controller
             case 'ping':
                 return response()->json([
                     'status' => 'success',
-                    'message' => 'طھظ… ط§ظ„ط§طھطµط§ظ„ ط¨ظ‚ط§ط¹ط¯ط© ط§ظ„ط¨ظٹط§ظ†ط§طھ yusr_application ط¹ط¨ط± Laravel API ط¨ظ†ط¬ط§ط­!',
+                    'message' => 'تم الاتصال بقاعدة البيانات عبر Laravel API بنجاح!',
                     'database' => config('database.connections.mysql.database'),
                     'framework' => 'Laravel ' . app()->version(),
                 ]);
 
-            // ظ…طµط§ط¯ظ‚ط© ظˆط­ط³ط§ط¨ط§طھ
             case 'register_caregiver':
                 return $this->auth->registerCaregiver($request);
             case 'login_caregiver':
                 return $this->auth->loginCaregiver($request);
+            case 'logout':
+                return $this->auth->logout($request);
             case 'get_caregiver':
-                return $this->caregiver->show($request->input('Caregivers_ID', $request->query('Caregivers_ID')));
+                return $this->caregiver->show($request);
             case 'update_caregiver':
                 return $this->caregiver->update($request);
 
@@ -78,13 +79,15 @@ class LegacyBridgeController extends Controller
             case 'forgot_password':
                 return $this->auth->forgotPassword($request);
             case 'get_elderly':
-                return $this->elderly->show($request->input('Eldery_ID', $request->query('Eldery_ID')));
+                return $this->elderly->show($request);
             case 'update_elderly':
                 return $this->elderly->update($request);
+            case 'generate_linking_code':
+            case 'create_linking_code':
+                return $this->elderly->generateLinkingCode($request);
             case 'link_elderly':
                 return $this->elderly->linkCaregiver($request);
 
-            // ط£ط¯ظˆظٹط©
             case 'get_medications':
                 return $this->medication->index($request);
             case 'add_medication':
@@ -94,7 +97,6 @@ class LegacyBridgeController extends Controller
             case 'delete_medication':
                 return $this->medication->destroy(null, $request);
 
-            // ظ…ظˆط§ط¹ظٹط¯
             case 'get_appointments':
                 return $this->appointment->index($request);
             case 'add_appointment':
@@ -102,7 +104,6 @@ class LegacyBridgeController extends Controller
             case 'delete_appointment':
                 return $this->appointment->destroy(null, $request);
 
-            // ط§طھطµط§ظ„ط§طھ ط§ظ„ط·ظˆط§ط±ط¦
             case 'get_emergency_contacts':
                 return $this->emergency->getContacts($request);
             case 'add_emergency_contact':
@@ -110,7 +111,6 @@ class LegacyBridgeController extends Controller
             case 'delete_emergency_contact':
                 return $this->emergency->destroyContact(null, $request);
 
-            // ط£ط¬ظ‡ط²ط©
             case 'get_devices':
                 return $this->device->index($request);
             case 'add_device':
@@ -118,7 +118,6 @@ class LegacyBridgeController extends Controller
             case 'delete_device':
                 return $this->device->destroy(null, $request);
 
-            // طµط­ط© ظˆظ‚ط±ط§ط،ط§طھ
             case 'get_health_monitoring':
                 return $this->health->getRecords($request);
             case 'add_health_record':
@@ -128,7 +127,6 @@ class LegacyBridgeController extends Controller
             case 'add_health_alert':
                 return $this->health->storeAlert($request);
 
-            // ط¨ظ„ط§ط؛ط§طھ ط§ظ„ط·ظˆط§ط±ط¦
             case 'get_emergency_log':
                 return $this->emergency->getLogs($request);
             case 'add_emergency_log':
@@ -136,7 +134,6 @@ class LegacyBridgeController extends Controller
             case 'update_emergency_status':
                 return $this->emergency->updateStatus($request);
 
-            // ظ…ظˆظ‚ط¹ ظˆظ†ط·ط§ظ‚ط§طھ ط¢ظ…ظ†ط©
             case 'get_location':
                 return $this->location->current($request);
             case 'update_location':
@@ -146,13 +143,11 @@ class LegacyBridgeController extends Controller
             case 'get_safe_zones':
                 return $this->location->getSafeZones($request);
 
-            // ط¥ط´ط¹ط§ط±ط§طھ
             case 'get_notifications':
                 return $this->notification->index($request);
             case 'add_notification':
                 return $this->notification->store($request);
 
-            // ط£ظ†ظˆط§ط¹ ط§ظ„ط±ط¹ط§ظٹط© ظˆط§ظ„ط®ط¯ظ…ط§طھ
             case 'get_type_of_care':
                 return $this->service->getTypeOfCare($request);
             case 'add_type_of_care':
@@ -164,7 +159,6 @@ class LegacyBridgeController extends Controller
             case 'get_service_requests':
                 return $this->service->getServiceRequests($request);
 
-            // ط§ظ„ظ…ط³ط§ط¹ط¯ ط§ظ„طµظˆطھظٹ ط§ظ„ط°ظƒظٹ Gemini
             case 'voice_assistant':
             case 'ask_ai':
                 return $this->ai->ask($request);
@@ -172,9 +166,8 @@ class LegacyBridgeController extends Controller
             default:
                 return response()->json([
                     'status' => 'error',
-                    'message' => "ط§ظ„ط¥ط¬ط±ط§ط، ط§ظ„ظ…ط·ظ„ظˆط¨ ({$action}) ط؛ظٹط± ظ…ط¹ط±ظˆظپ ظپظٹ Laravel API"
+                    'message' => "الإجراء المطلوب ({$action}) غير معروف في Laravel API",
                 ], 200);
         }
     }
 }
-

@@ -19,6 +19,8 @@ class _LinkSeniorPageState extends State<LinkSeniorPage> {
     (_) => TextEditingController(),
   );
   final List<FocusNode> _focusNodes = List.generate(6, (_) => FocusNode());
+  bool _isLinking = false;
+  String? _errorMessage;
 
   @override
   void dispose() {
@@ -50,7 +52,7 @@ class _LinkSeniorPageState extends State<LinkSeniorPage> {
           ),
         ),
         content: Text(
-          'يظهر رمز الربط المكون من 6 أرقام في شاشة تطبيق كبير السن عند اختيار "أنا كبير السن". يمكنك طلبه منه وإدخاله هنا للربط المباشر.',
+          'يظهر رمز الربط المؤقت المكون من 6 أرقام في شاشة تطبيق كبير السن (صالح لمدة 10 دقائق ولمرة واحدة). اطلبه منه وأدخله هنا.',
           textAlign: TextAlign.center,
           style: GoogleFonts.cairo(
             fontSize: 14,
@@ -85,26 +87,66 @@ class _LinkSeniorPageState extends State<LinkSeniorPage> {
 
   Future<void> _onLinkAccount() async {
     final code = _controllers.map((c) => c.text).join().trim();
-    if (code.isNotEmpty) {
-      final parsedId = int.tryParse(code.replaceAll(RegExp(r'[^0-9]'), ''));
-      final caregiverId = AuthService().userId;
-      if (parsedId != null && parsedId > 0 && caregiverId != null) {
-        final res = await ApiService.instance.linkElderly(
-          caregiverId: caregiverId,
-          elderlyId: parsedId,
-        );
-        if (res['status'] == 'success') {
-          AuthService().linkSenior(parsedId);
-          await SeniorManager().fetchSeniorsFromDatabase();
-        }
-      }
+    if (code.length != 6 || int.tryParse(code) == null) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = 'أدخل رمز الربط المكون من 6 أرقام';
+      });
+      return;
     }
-    if (mounted) {
-      Navigator.pushNamedAndRemoveUntil(
-        context,
-        '/main-caregiver',
-        (route) => false,
+
+    final caregiverId = AuthService().userId;
+    if (caregiverId == null) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = 'يجب تسجيل الدخول كـمقدم رعاية أولاً';
+      });
+      return;
+    }
+
+    setState(() {
+      _isLinking = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final res = await ApiService.instance.linkElderly(
+        caregiverId: caregiverId,
+        linkingCode: code,
       );
+      if (!mounted) return;
+
+      if (res['status'] == 'success') {
+        final elderly = res['elderly'];
+        final elderlyId = elderly is Map
+            ? int.tryParse(elderly['Eldery_ID']?.toString() ?? '')
+            : null;
+        if (elderlyId != null && elderlyId > 0) {
+          AuthService().linkSenior(elderlyId);
+        }
+        await SeniorManager().fetchSeniorsFromDatabase();
+        if (!mounted) return;
+        Navigator.pushNamedAndRemoveUntil(
+          context,
+          '/main-caregiver',
+          (route) => false,
+        );
+        return;
+      }
+
+      setState(() {
+        _errorMessage = res['message']?.toString() ??
+            'رمز الربط غير صالح أو منتهي الصلاحية';
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = 'تعذر إتمام الربط حالياً، حاول مرة أخرى';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isLinking = false);
+      }
     }
   }
 
@@ -170,6 +212,7 @@ class _LinkSeniorPageState extends State<LinkSeniorPage> {
                                       keyboardType: TextInputType.number,
                                       textAlign: TextAlign.center,
                                       maxLength: 1,
+                                      enabled: !_isLinking,
                                       style: GoogleFonts.cairo(
                                         fontSize: 22,
                                         fontWeight: FontWeight.bold,
@@ -210,12 +253,25 @@ class _LinkSeniorPageState extends State<LinkSeniorPage> {
                               ),
                             ),
 
+                            if (_errorMessage != null) ...[
+                              const SizedBox(height: 16),
+                              Text(
+                                _errorMessage!,
+                                textAlign: TextAlign.center,
+                                style: GoogleFonts.cairo(
+                                  fontSize: 13.5,
+                                  color: Colors.red.shade700,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+
                             const Spacer(),
                             const SizedBox(height: 36),
 
                             // زر ربط الحساب
                             ElevatedButton(
-                              onPressed: _onLinkAccount,
+                              onPressed: _isLinking ? null : _onLinkAccount,
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: AppColors.mainColor,
                                 foregroundColor: AppColors.textLight,
@@ -225,13 +281,22 @@ class _LinkSeniorPageState extends State<LinkSeniorPage> {
                                 ),
                                 elevation: 0,
                               ),
-                              child: Text(
-                                'ربط الحساب والمتابعة',
-                                style: GoogleFonts.cairo(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
+                              child: _isLinking
+                                  ? const SizedBox(
+                                      width: 22,
+                                      height: 22,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : Text(
+                                      'ربط الحساب والمتابعة',
+                                      style: GoogleFonts.cairo(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
                             ),
                             const SizedBox(height: 14),
 

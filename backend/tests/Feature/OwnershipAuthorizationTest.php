@@ -155,6 +155,7 @@ class OwnershipAuthorizationTest extends TestCase
         $cg1 = $this->makeCaregiver('772000006', null, 'CG1');
         $cg2 = $this->makeCaregiver('772000007', null, 'CG2');
 
+        // Spoofed Caregivers_ID still forbidden (even if a code were present).
         $this->withToken($this->tokenFor($cg1))
             ->postJson('/api/elderly/link', [
                 'Caregivers_ID' => $cg2->Caregivers_ID,
@@ -165,20 +166,21 @@ class OwnershipAuthorizationTest extends TestCase
         $this->assertNull(Caregiver::find($cg2->Caregivers_ID)->Eldery_ID);
     }
 
-    public function test_caregiver_can_link_self_to_elderly(): void
+    public function test_direct_id_link_bypass_blocked(): void
     {
         $e1 = $this->makeElderly('771000010', 'E1');
         $cg1 = $this->makeCaregiver('772000008', null, 'CG1');
 
+        // P1.2 security: linking by Eldery_ID alone is blocked.
         $this->withToken($this->tokenFor($cg1))
             ->postJson('/api/elderly/link', [
                 'Caregivers_ID' => $cg1->Caregivers_ID,
                 'Eldery_ID' => $e1->Eldery_ID,
             ])
-            ->assertStatus(200)
-            ->assertJson(['status' => 'success']);
+            ->assertStatus(403)
+            ->assertJson(['error_type' => 'forbidden']);
 
-        $this->assertSame($e1->Eldery_ID, (int) Caregiver::find($cg1->Caregivers_ID)->Eldery_ID);
+        $this->assertNull(Caregiver::find($cg1->Caregivers_ID)->Eldery_ID);
     }
 
     public function test_elderly_token_cannot_perform_link(): void

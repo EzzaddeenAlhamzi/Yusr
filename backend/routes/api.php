@@ -53,7 +53,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/caregiver/{id}', [CaregiverController::class, 'show']);
     Route::match(['put', 'post'], '/caregiver/{id?}', [CaregiverController::class, 'update']);
 
-    // كبير السن — /link before /{id} so "link" is not captured as an id
+    // كبير السن — linking-code + /link before /{id} so paths are not captured as ids
+    Route::post('/elderly/linking-code', [ElderlyController::class, 'generateLinkingCode']);
     Route::post('/elderly/link', [ElderlyController::class, 'linkCaregiver']);
     Route::get('/elderly/{id}', [ElderlyController::class, 'show']);
     Route::match(['put', 'post'], '/elderly/{id?}', [ElderlyController::class, 'update']);

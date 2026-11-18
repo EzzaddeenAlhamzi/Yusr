@@ -147,6 +147,7 @@ class _ProfilePageCaregiverState extends State<ProfilePageCaregiver> {
                       email: newEmail.isNotEmpty ? newEmail : _caregiverEmail,
                       relationship: _relationship,
                     );
+                    if (!mounted) return;
                     AuthService().setCaregiverSession(
                       id: id,
                       name: newName,
@@ -154,6 +155,7 @@ class _ProfilePageCaregiverState extends State<ProfilePageCaregiver> {
                       email: newEmail.isNotEmpty ? newEmail : _caregiverEmail,
                     );
                   }
+                  if (!ctx.mounted) return;
                   navigator.pop();
                 }
               },

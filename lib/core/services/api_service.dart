@@ -81,27 +81,69 @@ class ApiService {
     _isDiscovering = false;
   }
 
+  /// Explicit trusted Yusr origins (scheme+host+port). Lab policy.
+  /// Bearer is attached only when origin matches AND path is a Yusr API path.
+  @visibleForTesting
+  static const Set<String> trustedBearerOrigins = {
+    'http://127.0.0.1:8088',
+    'http://localhost:8088',
+    'http://10.0.2.2:8088',
+    'http://192.168.0.252:8088',
+    // Apache yusr_api on default HTTP port 80
+    'http://127.0.0.1',
+    'http://localhost',
+    'http://10.0.2.2',
+    'http://192.168.0.252',
+    // USB ADB reverse (non-8000)
+    'http://127.0.0.1:8080',
+    'http://localhost:8080',
+  };
+
+  /// Build canonical origin string: scheme://host[:port] (omit default 80/443).
+  @visibleForTesting
+  static String? originOf(Uri uri) {
+    if (!uri.hasScheme || uri.host.isEmpty) return null;
+    final scheme = uri.scheme.toLowerCase();
+    if (scheme != 'http' && scheme != 'https') return null;
+    final host = uri.host.toLowerCase();
+    final port = uri.hasPort ? uri.port : (scheme == 'https' ? 443 : 80);
+    if ((scheme == 'http' && port == 80) || (scheme == 'https' && port == 443)) {
+      return '$scheme://$host';
+    }
+    return '$scheme://$host:$port';
+  }
+
   /// Whether Authorization Bearer may be attached for [url].
-  /// Trusted: Yusr lab `:8088` `/api/legacy` and other non-`:8000` Yusr API paths.
-  /// Never attaches to `:8000` or unrelated hosts.
+  /// Strict: scheme+host+port must match [trustedBearerOrigins]; path must be
+  /// `/api/legacy` or `yusr_api`. Never attaches to `:8000`, redirects' foreign
+  /// hosts, discovery noise, or misleading hostnames/paths/ports.
   @visibleForTesting
   static bool isTrustedBearerUrl(String url) {
     final trimmed = url.trim();
     if (trimmed.isEmpty) return false;
     final uri = Uri.tryParse(trimmed);
     if (uri == null || !uri.hasScheme) return false;
+
+    // Reject userinfo (http://attacker@127.0.0.1:8088/...) and fragments tricks.
+    if (uri.userInfo.isNotEmpty) return false;
+
     if (uri.port == 8000) return false;
     if (RegExp(r':8000(/|$)').hasMatch(trimmed)) return false;
 
-    final isYusrPath =
-        trimmed.contains('/api/legacy') || trimmed.contains('yusr_api');
-    if (!isYusrPath) return false;
+    final origin = originOf(uri);
+    if (origin == null || !trustedBearerOrigins.contains(origin)) {
+      return false;
+    }
 
-    // Prefer lab 8088; also allow Apache yusr_api / custom non-8000 Yusr paths.
-    if (uri.port == 8088 && trimmed.contains('/api/legacy')) return true;
-    if (trimmed.contains('/api/legacy') && uri.port != 8000) return true;
-    if (trimmed.contains('yusr_api') && uri.port != 8000) return true;
-    return false;
+    final path = uri.path.toLowerCase();
+    final isLegacy = path == '/api/legacy' || path.startsWith('/api/legacy/');
+    final isYusrApi = path.contains('yusr_api');
+    if (!isLegacy && !isYusrApi) return false;
+
+    // Lab artisan path must stay on :8088 (or other explicitly trusted non-80 origins).
+    if (isLegacy && uri.port == 8000) return false;
+
+    return true;
   }
 
   Future<void> _persistTokenFromAuthResponse(Map<String, dynamic> res) async {
@@ -502,8 +544,26 @@ class ApiService {
     });
   }
 
-  /// ربط مقدم الرعاية بكبير السن في قاعدة البيانات
+  /// إنشاء رمز ربط مؤقت (كبير السن فقط — 6 أرقام، 10 دقائق)
+  Future<Map<String, dynamic>> generateLinkingCode() async {
+    return _sendRequest({'action': 'generate_linking_code'});
+  }
+
+  /// ربط مقدم الرعاية بكبير السن عبر رمز الربط المؤقت (ليس عبر المعرف المباشر)
   Future<Map<String, dynamic>> linkElderly({
+    required int caregiverId,
+    required String linkingCode,
+  }) async {
+    return _sendRequest({
+      'action': 'link_elderly',
+      'Caregivers_ID': caregiverId,
+      'linking_code': linkingCode,
+    });
+  }
+
+  /// @Deprecated — direct-ID linking is blocked server-side; use [linkElderly] with code.
+  @Deprecated('Use linkElderly with linkingCode')
+  Future<Map<String, dynamic>> linkElderlyById({
     required int caregiverId,
     required int elderlyId,
   }) async {

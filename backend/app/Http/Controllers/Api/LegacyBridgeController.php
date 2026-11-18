@@ -82,6 +82,9 @@ class LegacyBridgeController extends Controller
                 return $this->elderly->show($request);
             case 'update_elderly':
                 return $this->elderly->update($request);
+            case 'generate_linking_code':
+            case 'create_linking_code':
+                return $this->elderly->generateLinkingCode($request);
             case 'link_elderly':
                 return $this->elderly->linkCaregiver($request);
 

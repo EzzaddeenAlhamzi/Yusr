@@ -19,7 +19,8 @@ class ElderlyPolicy
     }
 
     /**
-     * Linking: only the authenticated caregiver may attach themselves to an elderly.
+     * Linking: only the authenticated caregiver may attach themselves after a
+     * valid single-use linking code was consumed (controller enforces code path).
      */
     public function link(Caregiver|Elderly $actor, Elderly $elderly): bool
     {

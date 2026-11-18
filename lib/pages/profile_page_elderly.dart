@@ -574,9 +574,8 @@ class _ProfilePageElderlyState extends State<ProfilePageElderly> {
                 );
               }
               navigator.pushNamedAndRemoveUntil(
-                '/login',
+                '/welcome',
                 (route) => false,
-                arguments: {'role': 'senior'},
               );
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade700),

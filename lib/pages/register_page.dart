@@ -85,6 +85,7 @@ class _RegisterPageState extends State<RegisterPage> {
             newRole: 'caregiver',
             newUserId: caregiverId,
           );
+          if (!mounted) return;
           AuthService().setCaregiverSession(
             id: caregiverId,
             name: name,
@@ -137,6 +138,7 @@ class _RegisterPageState extends State<RegisterPage> {
             newRole: 'senior',
             newUserId: seniorIdInt,
           );
+          if (!mounted) return;
           AuthService().setSeniorSession(
             id: seniorIdInt,
             name: name,
@@ -144,6 +146,7 @@ class _RegisterPageState extends State<RegisterPage> {
             email: email,
           );
           await SeniorManager().fetchSeniorsFromDatabase();
+          if (!mounted) return;
           final prefs = await SharedPreferences.getInstance();
           if (!mounted) return;
           final seniorId = elderly['Eldery_ID']?.toString() ?? '';

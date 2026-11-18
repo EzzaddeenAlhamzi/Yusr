@@ -3,7 +3,6 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'core/constants/app_theme.dart';
 import 'core/services/api_service.dart';
-import 'core/services/auth_service.dart';
 import 'core/widgets/auth_route_guard.dart';
 import 'core/widgets/session_bootstrap_page.dart';
 import 'pages/welcome_page.dart';
@@ -70,30 +69,35 @@ void main() async {
   runApp(const YusrApp());
 }
 
-void _handleUnauthorized(String? role) {
+/// Public auth / marketing surfaces — 401 must never bounce these to caregiver login.
+const Set<String> _publicAuthRoutes = {
+  '/',
+  '/welcome',
+  '/login',
+  '/register',
+  '/onboarding',
+  '/who-are-you',
+  '/choose-mode',
+};
+
+void _handleUnauthorized(String? _) {
+  // Argument ignored on purpose: caregiver-default /login blocked elderly UI (EMA).
   if (_unauthorizedNavInFlight) return;
   final nav = yusrNavigatorKey.currentState;
   if (nav == null) return;
 
-  // Avoid redirect loops when already on public auth surfaces.
-  final route = ModalRoute.of(nav.context);
-  final name = route?.settings.name;
-  if (name == '/login' ||
-      name == '/register' ||
-      name == '/welcome' ||
-      name == '/' ||
-      name == '/onboarding' ||
-      name == '/who-are-you') {
+  // NavigatorKey.context's ModalRoute is unreliable; read the top route name safely.
+  String? name;
+  nav.popUntil((route) {
+    name = route.settings.name;
+    return true;
+  });
+  if (name != null && _publicAuthRoutes.contains(name)) {
     return;
   }
 
   _unauthorizedNavInFlight = true;
-  final roleArg = AuthService.normalizeClientRole(role) ?? 'caregiver';
-  nav.pushNamedAndRemoveUntil(
-    '/login',
-    (r) => false,
-    arguments: {'role': roleArg},
-  ).whenComplete(() {
+  nav.pushNamedAndRemoveUntil('/welcome', (r) => false).whenComplete(() {
     _unauthorizedNavInFlight = false;
   });
 }

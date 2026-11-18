@@ -874,9 +874,8 @@ class _ProfilePageCaregiverState extends State<ProfilePageCaregiver> {
                       );
                     }
                     navigator.pushNamedAndRemoveUntil(
-                      '/login',
+                      '/welcome',
                       (route) => false,
-                      arguments: {'role': 'caregiver'},
                     );
                   },
                   child: Text(

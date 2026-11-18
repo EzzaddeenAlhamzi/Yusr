@@ -210,4 +210,25 @@ void main() {
       expect(badPass.containsKey('is_connection_error'), isFalse);
     });
   });
+
+  group('EMA cold-start after logout', () {
+    test('401 without Bearer must not imply an authenticated session', () {
+      // Contract: hadBearer=false → clear local state only; no caregiver /login redirect.
+      // (Navigation gating lives in ApiService._sendRequest + main._handleUnauthorized.)
+      expect(AuthService().isLoggedIn, isFalse);
+      expect(AuthService.normalizeClientRole(null), isNull);
+    });
+
+    test('unauthenticated restore outcome is Welcome path (not caregiver login)',
+        () async {
+      AuthService.meFetcher = () async => {
+            'status': 'error',
+            'error_type': 'unauthenticated',
+            'http_status': 401,
+          };
+      final outcome = await AuthService().restoreSession();
+      expect(outcome, SessionRestoreOutcome.unauthenticated);
+      expect(await AuthService().homeRouteForSession(), '/welcome');
+    });
+  });
 }

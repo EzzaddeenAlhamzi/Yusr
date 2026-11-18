@@ -1114,10 +1114,15 @@ class ApiService {
         final responseBody = await response.transform(utf8.decoder).join();
 
         if (response.statusCode == 401) {
+          // Only navigate away when a Bearer was actually sent. Unauthenticated
+          // probes (startup health get_services, etc.) must NOT force caregiver /login.
+          final hadBearer = token != null && token.trim().isNotEmpty;
           final lastRole = AuthService().role;
           await TokenStorage.instance.clear();
           AuthService().clearSessionLocal();
-          onUnauthorized?.call(lastRole);
+          if (hadBearer) {
+            onUnauthorized?.call(lastRole);
+          }
           Map<String, dynamic> data = {
             'status': 'error',
             'error_type': 'unauthenticated',

@@ -573,7 +573,6 @@ class CustomAppDrawer extends StatelessWidget {
             ElevatedButton(
               onPressed: () async {
                 Navigator.pop(ctx);
-                final priorRole = AuthService().role;
                 final result = await AuthService().logout();
                 if (!context.mounted) return;
                 if (!result.serverRevoked) {
@@ -588,13 +587,11 @@ class CustomAppDrawer extends StatelessWidget {
                     ),
                   );
                 }
+                // Welcome — not caregiver-default /login — so either role can sign in.
                 Navigator.pushNamedAndRemoveUntil(
                   context,
-                  '/login',
+                  '/welcome',
                   (route) => false,
-                  arguments: {
-                    'role': priorRole ?? 'caregiver',
-                  },
                 );
               },
               style: ElevatedButton.styleFrom(

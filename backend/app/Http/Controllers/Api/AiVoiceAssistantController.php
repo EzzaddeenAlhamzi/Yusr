@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Services\GeminiService;
+use App\Support\YusrAccess;
 use Illuminate\Http\Request;
 
 class AiVoiceAssistantController extends Controller
@@ -31,14 +32,23 @@ class AiVoiceAssistantController extends Controller
         $prompt = $data['prompt'] ?? $data['query'] ?? $data['message'] ?? $request->input('prompt', '');
         $elderlyId = $data['elderly_id'] ?? $data['Elderly_ID'] ?? $request->input('elderly_id');
 
-        if (empty(trim((string)$prompt))) {
+        if (empty(trim((string) $prompt))) {
             return response()->json([
                 'status' => 'error',
-                'message' => 'يرجى تقديم نص الاستفسار الصوتي أو الكتابي'
+                'message' => 'يرجى تقديم نص الاستفسار الصوتي أو الكتابي',
             ], 400);
         }
 
-        $result = $this->geminiService->ask($elderlyId ? (int)$elderlyId : null, $prompt);
+        $gated = YusrAccess::gateElderly(
+            $request,
+            $elderlyId !== null && $elderlyId !== '' ? (int) $elderlyId : null,
+            true
+        );
+        if ($gated instanceof \Illuminate\Http\JsonResponse) {
+            return $gated;
+        }
+
+        $result = $this->geminiService->ask($gated, $prompt);
 
         return response()->json($result);
     }

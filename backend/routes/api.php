@@ -19,9 +19,12 @@ use App\Http\Controllers\Api\LegacyBridgeController;
 |--------------------------------------------------------------------------
 | API Routes - Yusr (يُسر) Laravel Backend
 |--------------------------------------------------------------------------
+| P1.2: public ping + auth; all resource routes require Sanctum + ownership
+| checks inside controllers. Legacy/bridge uses legacy.auth (public actions
+| only for ping/register/login/forgot).
 */
 
-// 1. اختبار الاتصال والصحة (Health Check)
+// 1. اختبار الاتصال والصحة (Health Check) — public
 Route::match(['get', 'post'], '/ping', function () {
     $db = config('database.connections.mysql.database');
 
@@ -33,7 +36,7 @@ Route::match(['get', 'post'], '/ping', function () {
     ]);
 });
 
-// 2. المصادقة والحسابات (Authentication)
+// 2. المصادقة والحسابات (Authentication) — public register/login/forgot
 Route::prefix('auth')->group(function () {
     Route::post('/caregiver/register', [AuthController::class, 'registerCaregiver']);
     Route::post('/caregiver/login', [AuthController::class, 'loginCaregiver']);
@@ -42,66 +45,73 @@ Route::prefix('auth')->group(function () {
     Route::post('/forgot-password', [AuthController::class, 'forgotPassword']);
 });
 
-// 3. مقدم الرعاية (Caregiver)
-Route::get('/caregiver/{id}', [CaregiverController::class, 'show']);
-Route::match(['put', 'post'], '/caregiver/{id?}', [CaregiverController::class, 'update']);
+// 3–13. Protected resources (Sanctum AuthN + controller AuthZ)
+Route::middleware('auth:sanctum')->group(function () {
+    Route::post('/auth/logout', [AuthController::class, 'logout']);
 
-// 4. كبير السن (Elderly)
-Route::get('/elderly/{id}', [ElderlyController::class, 'show']);
-Route::match(['put', 'post'], '/elderly/{id?}', [ElderlyController::class, 'update']);
-Route::post('/elderly/link', [ElderlyController::class, 'linkCaregiver']);
+    // مقدم الرعاية
+    Route::get('/caregiver/{id}', [CaregiverController::class, 'show']);
+    Route::match(['put', 'post'], '/caregiver/{id?}', [CaregiverController::class, 'update']);
 
-// 5. الأدوية (Medications)
-Route::get('/medications', [MedicationController::class, 'index']);
-Route::post('/medications', [MedicationController::class, 'store']);
-Route::match(['put', 'post'], '/medications/{id?}', [MedicationController::class, 'update']);
-Route::match(['delete', 'post'], '/medications/{id?}/delete', [MedicationController::class, 'destroy']);
+    // كبير السن — /link before /{id} so "link" is not captured as an id
+    Route::post('/elderly/link', [ElderlyController::class, 'linkCaregiver']);
+    Route::get('/elderly/{id}', [ElderlyController::class, 'show']);
+    Route::match(['put', 'post'], '/elderly/{id?}', [ElderlyController::class, 'update']);
 
-// 6. المواعيد (Appointments)
-Route::get('/appointments', [AppointmentController::class, 'index']);
-Route::post('/appointments', [AppointmentController::class, 'store']);
-Route::match(['delete', 'post'], '/appointments/{id?}/delete', [AppointmentController::class, 'destroy']);
+    // الأدوية
+    Route::get('/medications', [MedicationController::class, 'index']);
+    Route::post('/medications', [MedicationController::class, 'store']);
+    Route::match(['put', 'post'], '/medications/{id?}', [MedicationController::class, 'update']);
+    Route::match(['delete', 'post'], '/medications/{id?}/delete', [MedicationController::class, 'destroy']);
 
-// 7. القياسات الصحية والتنبيهات (Health Monitoring & Alerts)
-Route::get('/health/records', [HealthController::class, 'getRecords']);
-Route::post('/health/records', [HealthController::class, 'storeRecord']);
-Route::get('/health/alerts', [HealthController::class, 'getAlerts']);
-Route::post('/health/alerts', [HealthController::class, 'storeAlert']);
+    // المواعيد
+    Route::get('/appointments', [AppointmentController::class, 'index']);
+    Route::post('/appointments', [AppointmentController::class, 'store']);
+    Route::match(['delete', 'post'], '/appointments/{id?}/delete', [AppointmentController::class, 'destroy']);
 
-// 8. الطوارئ وجهات الاتصال (Emergency)
-Route::get('/emergency/logs', [EmergencyController::class, 'getLogs']);
-Route::post('/emergency/logs', [EmergencyController::class, 'storeLog']);
-Route::match(['put', 'post'], '/emergency/logs/{id?}/status', [EmergencyController::class, 'updateStatus']);
-Route::get('/emergency/contacts', [EmergencyController::class, 'getContacts']);
-Route::post('/emergency/contacts', [EmergencyController::class, 'storeContact']);
-Route::match(['delete', 'post'], '/emergency/contacts/{id?}/delete', [EmergencyController::class, 'destroyContact']);
+    // القياسات الصحية والتنبيهات
+    Route::get('/health/records', [HealthController::class, 'getRecords']);
+    Route::post('/health/records', [HealthController::class, 'storeRecord']);
+    Route::get('/health/alerts', [HealthController::class, 'getAlerts']);
+    Route::post('/health/alerts', [HealthController::class, 'storeAlert']);
 
-// 9. الأجهزة الذكية (Devices)
-Route::get('/devices', [DeviceController::class, 'index']);
-Route::post('/devices', [DeviceController::class, 'store']);
-Route::match(['delete', 'post'], '/devices/{id?}/delete', [DeviceController::class, 'destroy']);
+    // الطوارئ وجهات الاتصال
+    Route::get('/emergency/logs', [EmergencyController::class, 'getLogs']);
+    Route::post('/emergency/logs', [EmergencyController::class, 'storeLog']);
+    Route::match(['put', 'post'], '/emergency/logs/{id?}/status', [EmergencyController::class, 'updateStatus']);
+    Route::get('/emergency/contacts', [EmergencyController::class, 'getContacts']);
+    Route::post('/emergency/contacts', [EmergencyController::class, 'storeContact']);
+    Route::match(['delete', 'post'], '/emergency/contacts/{id?}/delete', [EmergencyController::class, 'destroyContact']);
 
-// 10. التتبع الجغرافي والنطاقات الآمنة (Location & Safe Zones)
-Route::get('/location/current', [LocationController::class, 'current']);
-Route::post('/location', [LocationController::class, 'store']);
-Route::get('/location/history', [LocationController::class, 'history']);
-Route::get('/location/safe-zones', [LocationController::class, 'getSafeZones']);
+    // الأجهزة الذكية
+    Route::get('/devices', [DeviceController::class, 'index']);
+    Route::post('/devices', [DeviceController::class, 'store']);
+    Route::match(['delete', 'post'], '/devices/{id?}/delete', [DeviceController::class, 'destroy']);
 
-// 11. الإشعارات (Notifications)
-Route::get('/notifications', [NotificationController::class, 'index']);
-Route::post('/notifications', [NotificationController::class, 'store']);
+    // التتبع الجغرافي والنطاقات الآمنة
+    Route::get('/location/current', [LocationController::class, 'current']);
+    Route::post('/location', [LocationController::class, 'store']);
+    Route::get('/location/history', [LocationController::class, 'history']);
+    Route::get('/location/safe-zones', [LocationController::class, 'getSafeZones']);
 
-// 12. الخدمات وأنواع الرعاية (Services & Care Types)
-Route::get('/services', [ServiceController::class, 'getServices']);
-Route::post('/services/request', [ServiceController::class, 'requestService']);
-Route::get('/services/requests', [ServiceController::class, 'getServiceRequests']);
-Route::get('/type-of-care', [ServiceController::class, 'getTypeOfCare']);
-Route::post('/type-of-care', [ServiceController::class, 'storeTypeOfCare']);
+    // الإشعارات
+    Route::get('/notifications', [NotificationController::class, 'index']);
+    Route::post('/notifications', [NotificationController::class, 'store']);
 
-// 13. الذكاء الاصطناعي والمساعد الصوتي الذكي (Gemini AI Voice Assistant)
-Route::post('/ai/voice-assistant', [AiVoiceAssistantController::class, 'ask']);
-Route::post('/voice-assistant/ask', [AiVoiceAssistantController::class, 'ask']);
+    // الخدمات وأنواع الرعاية
+    Route::get('/services', [ServiceController::class, 'getServices']);
+    Route::post('/services/request', [ServiceController::class, 'requestService']);
+    Route::get('/services/requests', [ServiceController::class, 'getServiceRequests']);
+    Route::get('/type-of-care', [ServiceController::class, 'getTypeOfCare']);
+    Route::post('/type-of-care', [ServiceController::class, 'storeTypeOfCare']);
 
-// 14. طبقة التوافق الشاملة مع ملف index.php والطلبات القديمة (Legacy Bridge)
-Route::match(['get', 'post'], '/legacy', [LegacyBridgeController::class, 'handle']);
-Route::match(['get', 'post'], '/bridge', [LegacyBridgeController::class, 'handle']);
+    // الذكاء الاصطناعي
+    Route::post('/ai/voice-assistant', [AiVoiceAssistantController::class, 'ask']);
+    Route::post('/voice-assistant/ask', [AiVoiceAssistantController::class, 'ask']);
+});
+
+// 14. طبقة التوافق الشاملة (Legacy Bridge) — same AuthZ via legacy.auth
+Route::match(['get', 'post'], '/legacy', [LegacyBridgeController::class, 'handle'])
+    ->middleware('legacy.auth');
+Route::match(['get', 'post'], '/bridge', [LegacyBridgeController::class, 'handle'])
+    ->middleware('legacy.auth');

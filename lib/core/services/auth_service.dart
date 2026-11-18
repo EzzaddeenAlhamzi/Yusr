@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'senior_manager.dart';
+import 'token_storage.dart';
 
 /// إدارة صلاحيات الدخول وجلسة المستخدم الحالي في التطبيق
 class AuthService extends ChangeNotifier {
@@ -14,6 +15,9 @@ class AuthService extends ChangeNotifier {
   String? _userPhone;
   String? _userEmail;
   int? _linkedSeniorId;
+
+  /// Optional remote revoke hook (set by ApiService to avoid circular imports).
+  static Future<void> Function()? remoteLogoutHook;
 
   // قراءة حالة تسجيل الدخول والصلاحيات
   bool get isLoggedIn => _isLoggedIn;
@@ -77,8 +81,8 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// تسجيل الخروج وإلغاء صلاحيات الجلسة
-  void logout() {
+  /// مسح الجلسة المحلية فقط (بدون استدعاء شبكة) — يُستخدم عند 401.
+  void clearSessionLocal() {
     _isLoggedIn = false;
     _role = null;
     _userId = null;
@@ -88,5 +92,17 @@ class AuthService extends ChangeNotifier {
     _linkedSeniorId = null;
     SeniorManager().clear();
     notifyListeners();
+  }
+
+  /// تسجيل الخروج: إبطال التوكن (إن وُجد) + مسح التخزين الآمن + الجلسة.
+  Future<void> logout() async {
+    try {
+      final hook = remoteLogoutHook;
+      if (hook != null) {
+        await hook();
+      }
+    } catch (_) {}
+    await TokenStorage.instance.clear();
+    clearSessionLocal();
   }
 }

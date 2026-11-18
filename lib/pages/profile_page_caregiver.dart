@@ -853,8 +853,10 @@ class _ProfilePageCaregiverState extends State<ProfilePageCaregiver> {
                     backgroundColor: Colors.red.shade600,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
-                  onPressed: () {
+                  onPressed: () async {
                     Navigator.pop(ctx);
+                    await AuthService().logout();
+                    if (!context.mounted) return;
                     Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
                   },
                   child: Text(

@@ -555,9 +555,10 @@ class _ProfilePageElderlyState extends State<ProfilePageElderly> {
             child: Text('إلغاء', style: GoogleFonts.tajawal(fontWeight: FontWeight.bold)),
           ),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(ctx);
-              AuthService().logout();
+              await AuthService().logout();
+              if (!context.mounted) return;
               Navigator.pushNamedAndRemoveUntil(
                 context,
                 '/login',

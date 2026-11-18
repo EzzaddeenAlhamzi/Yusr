@@ -634,7 +634,7 @@ class CustomAppDrawer extends StatelessWidget {
               children: [
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  activeColor: AppColors.mainColor,
+                  activeThumbColor: AppColors.mainColor,
                   title: Text('تنبيهات استشعار السقوط',
                       style: GoogleFonts.cairo(fontSize: 13.5, fontWeight: FontWeight.bold)),
                   subtitle: Text('إشعار فوري عند رصد سقوط مفاجئ',
@@ -644,7 +644,7 @@ class CustomAppDrawer extends StatelessWidget {
                 ),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  activeColor: AppColors.mainColor,
+                  activeThumbColor: AppColors.mainColor,
                   title: Text('تنبيهات المنطقة الآمنة',
                       style: GoogleFonts.cairo(fontSize: 13.5, fontWeight: FontWeight.bold)),
                   subtitle: Text('إشعار عند مغادرة النطاق الجغرافي المحدد',
@@ -654,7 +654,7 @@ class CustomAppDrawer extends StatelessWidget {
                 ),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  activeColor: AppColors.mainColor,
+                  activeThumbColor: AppColors.mainColor,
                   title: Text('تذكيرات الأدوية',
                       style: GoogleFonts.cairo(fontSize: 13.5, fontWeight: FontWeight.bold)),
                   subtitle: Text('تنبيه مقدم الرعاية عند موعد جرعة الدواء',
@@ -664,7 +664,7 @@ class CustomAppDrawer extends StatelessWidget {
                 ),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  activeColor: const Color(0xFFD32F2F),
+                  activeThumbColor: const Color(0xFFD32F2F),
                   title: Text('صوت إنذار الطوارئ SOS',
                       style: GoogleFonts.cairo(fontSize: 13.5, fontWeight: FontWeight.bold)),
                   subtitle: Text('تشغيل صوت عالي حتى في الوضع الصامت',

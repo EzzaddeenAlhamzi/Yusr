@@ -626,7 +626,7 @@ class _ServicesPageState extends State<ServicesPage>
                       ),
                       const SizedBox(height: 6),
                       DropdownButtonFormField<int>(
-                        value: selectedElderlyId ?? int.tryParse(seniors.first.id),
+                        initialValue: selectedElderlyId ?? int.tryParse(seniors.first.id),
                         decoration: InputDecoration(
                           contentPadding: const EdgeInsets.symmetric(
                               horizontal: 12, vertical: 10),

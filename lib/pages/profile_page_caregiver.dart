@@ -610,7 +610,7 @@ class _ProfilePageCaregiverState extends State<ProfilePageCaregiver> {
           children: [
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              activeColor: AppColors.mainColor,
+              activeThumbColor: AppColors.mainColor,
               title: Text(
                 'تنبيهات الطوارئ الفورية',
                 style: GoogleFonts.cairo(
@@ -629,7 +629,7 @@ class _ProfilePageCaregiverState extends State<ProfilePageCaregiver> {
             const Divider(height: 20),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              activeColor: AppColors.mainColor,
+              activeThumbColor: AppColors.mainColor,
               title: Text(
                 'الدخول بالبصمة / الوجه',
                 style: GoogleFonts.cairo(

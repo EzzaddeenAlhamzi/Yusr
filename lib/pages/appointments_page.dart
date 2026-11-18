@@ -943,7 +943,7 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                       ),
                       const SizedBox(height: 4),
                       DropdownButtonFormField<String>(
-                        value: selectedType,
+                        initialValue: selectedType,
                         decoration: const InputDecoration(
                           border: OutlineInputBorder(),
                           filled: true,
@@ -1048,7 +1048,7 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                       ),
                       const SizedBox(height: 4),
                       DropdownButtonFormField<String>(
-                        value: selectedAdvance,
+                        initialValue: selectedAdvance,
                         decoration: const InputDecoration(
                           border: OutlineInputBorder(),
                           filled: true,
@@ -1225,7 +1225,7 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                       ),
                       const SizedBox(height: 4),
                       DropdownButtonFormField<String>(
-                        value: selectedType,
+                        initialValue: selectedType,
                         decoration: const InputDecoration(
                           border: OutlineInputBorder(),
                           filled: true,
@@ -1312,7 +1312,7 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                       ),
                       const SizedBox(height: 4),
                       DropdownButtonFormField<String>(
-                        value: selectedAdvance,
+                        initialValue: selectedAdvance,
                         decoration: const InputDecoration(
                           border: OutlineInputBorder(),
                           filled: true,

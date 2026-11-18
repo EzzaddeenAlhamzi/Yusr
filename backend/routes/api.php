@@ -47,6 +47,7 @@ Route::prefix('auth')->group(function () {
 
 // 3–13. Protected resources (Sanctum AuthN + controller AuthZ)
 Route::middleware('auth:sanctum')->group(function () {
+    Route::match(['get', 'post'], '/auth/me', [AuthController::class, 'me']);
     Route::post('/auth/logout', [AuthController::class, 'logout']);
 
     // مقدم الرعاية

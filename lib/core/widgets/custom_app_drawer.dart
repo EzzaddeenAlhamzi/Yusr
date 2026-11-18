@@ -573,12 +573,28 @@ class CustomAppDrawer extends StatelessWidget {
             ElevatedButton(
               onPressed: () async {
                 Navigator.pop(ctx);
-                await AuthService().logout();
+                final priorRole = AuthService().role;
+                final result = await AuthService().logout();
                 if (!context.mounted) return;
+                if (!result.serverRevoked) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'تم تسجيل الخروج محلياً. تعذّر تأكيد إلغاء الجلسة على الخادم بسبب الشبكة.',
+                        style: GoogleFonts.cairo(),
+                      ),
+                      backgroundColor: Colors.orange.shade800,
+                      duration: const Duration(seconds: 4),
+                    ),
+                  );
+                }
                 Navigator.pushNamedAndRemoveUntil(
                   context,
                   '/login',
                   (route) => false,
+                  arguments: {
+                    'role': priorRole ?? 'caregiver',
+                  },
                 );
               },
               style: ElevatedButton.styleFrom(

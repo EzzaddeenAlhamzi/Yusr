@@ -187,6 +187,7 @@ class AuthController extends Controller
         return response()->json([
             'status' => 'success',
             'message' => 'تم إنشاء حساب مقدم الرعاية بنجاح',
+            'role' => 'caregiver',
             'token' => $token,
             'caregiver' => [
                 'Caregivers_ID' => $caregiver->Caregivers_ID,
@@ -344,6 +345,7 @@ class AuthController extends Controller
         return response()->json([
             'status' => 'success',
             'message' => 'تم تسجيل حساب كبير السن بنجاح',
+            'role' => 'elderly',
             'token' => $token,
             'elderly' => [
                 'Eldery_ID' => $elderly->Eldery_ID,
@@ -467,6 +469,56 @@ class AuthController extends Controller
             'status' => 'success',
             'message' => 'تم إرسال رابط استعادة كلمة المرور إلى بريدك الإلكتروني بنجاح',
         ]);
+    }
+
+    /**
+     * P1.3: validate current Sanctum session and return role + safe profile.
+     */
+    public function me(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json([
+                'status' => 'error',
+                'error_type' => 'unauthenticated',
+                'message' => 'يجب تسجيل الدخول للوصول إلى هذا المورد',
+            ], 401);
+        }
+
+        if ($user instanceof Caregiver) {
+            return response()->json([
+                'status' => 'success',
+                'role' => 'caregiver',
+                'caregiver' => [
+                    'Caregivers_ID' => $user->Caregivers_ID,
+                    'C_Name' => $user->C_Name,
+                    'C_PhonNumber' => $user->C_PhonNumber,
+                    'C_Relationship' => $user->C_Relationship,
+                    'C_Email' => $user->C_Email,
+                    'Eldery_ID' => $user->Eldery_ID,
+                ],
+            ], 200);
+        }
+
+        if ($user instanceof Elderly) {
+            return response()->json([
+                'status' => 'success',
+                'role' => 'elderly',
+                'elderly' => [
+                    'Eldery_ID' => $user->Eldery_ID,
+                    'E_Name' => $user->E_Name,
+                    'E_sex' => $user->E_sex,
+                    'E_PhonNumber' => $user->E_PhonNumber,
+                    'E_Email' => $user->E_Email,
+                ],
+            ], 200);
+        }
+
+        return response()->json([
+            'status' => 'error',
+            'error_type' => 'unauthenticated',
+            'message' => 'جلسة غير صالحة',
+        ], 401);
     }
 
     /**

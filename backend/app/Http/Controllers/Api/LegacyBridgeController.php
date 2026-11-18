@@ -67,6 +67,9 @@ class LegacyBridgeController extends Controller
                 return $this->auth->loginCaregiver($request);
             case 'logout':
                 return $this->auth->logout($request);
+            case 'me':
+            case 'auth_me':
+                return $this->auth->me($request);
             case 'get_caregiver':
                 return $this->caregiver->show($request);
             case 'update_caregiver':

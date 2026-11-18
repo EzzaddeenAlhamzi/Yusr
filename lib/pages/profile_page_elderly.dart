@@ -556,11 +556,11 @@ class _ProfilePageElderlyState extends State<ProfilePageElderly> {
           ),
           ElevatedButton(
             onPressed: () async {
+              final navigator = Navigator.of(context);
               Navigator.pop(ctx);
               await AuthService().logout();
-              if (!context.mounted) return;
-              Navigator.pushNamedAndRemoveUntil(
-                context,
+              if (!mounted) return;
+              navigator.pushNamedAndRemoveUntil(
                 '/login',
                 (route) => false,
                 arguments: {'role': 'senior'},
@@ -1205,6 +1205,26 @@ class _ProfilePageElderlyState extends State<ProfilePageElderly> {
                                   MaterialPageRoute(
                                     builder: (_) => const DatesScreen(),
                                   ),
+                                );
+                              },
+                            ),
+                            const SizedBox(height: 12),
+
+                            // كارت رمز ربط العائلة (شاشة الرمز المؤقت بعد تسجيل الدخول)
+                            _buildNavigationCard(
+                              context: context,
+                              icon: Icons.link_rounded,
+                              title: 'رمز ربط العائلة',
+                              subtitle: 'إنشاء رمز مؤقت لربط حسابك بمقدم الرعاية',
+                              onTap: () {
+                                Navigator.pushNamed(
+                                  context,
+                                  '/senior-link-code',
+                                  arguments: {
+                                    'mode': 'advanced',
+                                    'role': 'senior',
+                                    'from': 'profile-elderly',
+                                  },
                                 );
                               },
                             ),

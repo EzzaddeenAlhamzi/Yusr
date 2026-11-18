@@ -99,6 +99,9 @@ class SimpleHomePage extends StatelessWidget {
               // 1. الشريط العلوي: بطارية على اليسار وساعة على اليمين
               _buildTopHeader(context),
 
+              // شريط واضح لرمز الربط بعد تسجيل الدخول (لا يمس شبكة SOS)
+              _buildLinkCodeEntry(context),
+
               // 2. شبكة الأزرار الستة
               Expanded(
                 child: Container(
@@ -222,6 +225,49 @@ class SimpleHomePage extends StatelessWidget {
           (route) => false,
         );
       },
+    );
+  }
+
+  /// مدخل إنتاجي لشاشة رمز الربط من الوضع البسيط (بعد المصادقة).
+  Widget _buildLinkCodeEntry(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Material(
+        color: const Color(0xFF125D73),
+        child: InkWell(
+          onTap: () {
+            Navigator.pushNamed(
+              context,
+              '/senior-link-code',
+              arguments: {
+                'mode': 'simple',
+                'role': 'senior',
+                'from': 'simple-home',
+              },
+            );
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Row(
+              children: [
+                const Icon(Icons.link_rounded, color: Colors.white, size: 32),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'رمز ربط العائلة',
+                    style: GoogleFonts.cairo(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const Icon(Icons.chevron_left, color: Colors.white, size: 28),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 

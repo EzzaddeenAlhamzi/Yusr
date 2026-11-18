@@ -362,6 +362,58 @@ class HomePage extends StatelessWidget {
                           padding: const EdgeInsets.symmetric(horizontal: 18.0),
                           child: Column(
                             children: [
+                              // مدخل واضح لرمز ربط العائلة بعد تسجيل الدخول
+                              InkWell(
+                                onTap: () {
+                                  Navigator.pushNamed(
+                                    context,
+                                    '/senior-link-code',
+                                    arguments: {
+                                      'mode': 'advanced',
+                                      'role': 'senior',
+                                      'from': 'home-elderly',
+                                    },
+                                  );
+                                },
+                                borderRadius: BorderRadius.circular(18),
+                                child: Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 16,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF125D73),
+                                    borderRadius: BorderRadius.circular(18),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.link_rounded,
+                                        color: Colors.white,
+                                        size: 30,
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Text(
+                                          'رمز ربط العائلة',
+                                          style: GoogleFonts.tajawal(
+                                            color: Colors.white,
+                                            fontSize: 22,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                      const Icon(
+                                        Icons.arrow_back_ios_new_rounded,
+                                        color: Colors.white,
+                                        size: 18,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 16),
                               // شبكة الخيارات والخدمات (Grid 2x3)
                               GridView.count(
                                 shrinkWrap: true,

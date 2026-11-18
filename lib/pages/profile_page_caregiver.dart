@@ -856,10 +856,14 @@ class _ProfilePageCaregiverState extends State<ProfilePageCaregiver> {
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
                   onPressed: () async {
+                    final navigator = Navigator.of(context);
                     Navigator.pop(ctx);
                     await AuthService().logout();
-                    if (!context.mounted) return;
-                    Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
+                    if (!mounted) return;
+                    navigator.pushNamedAndRemoveUntil(
+                      '/login',
+                      (route) => false,
+                    );
                   },
                   child: Text(
                     'تسجيل الخروج',

@@ -107,5 +107,7 @@ void main() {
     // SOS uses stacked outline Text widgets — assert presence, not uniqueness.
     expect(find.text('SOS'), findsWidgets);
     expect(find.text('الوضع المتقدم'), findsOneWidget);
+    // Production entry to linking-code screen (authenticated simple home).
+    expect(find.text('رمز ربط العائلة'), findsOneWidget);
   });
 }

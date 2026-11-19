@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../core/services/api_service.dart';
+import '../core/services/auth_service.dart';
 import '../shard/color.dart';
 import '../shard/custom_header.dart';
 import 'ai_page.dart';
@@ -607,7 +609,7 @@ class _AddDateScreenState extends State<AddDateScreen> {
 
                     // زر "حفظ الموعد"
                     GestureDetector(
-                      onTap: () {
+                      onTap: () async {
                         if (_appointmentName.isEmpty ||
                             _selectedDate == null ||
                             _selectedTime == null) {
@@ -624,6 +626,48 @@ class _AddDateScreenState extends State<AddDateScreen> {
                           );
                           return;
                         }
+                        final seniorId = AuthService().userId;
+                        if (seniorId == null) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                'يجب تسجيل الدخول لحفظ الموعد على الخادم',
+                                style: GoogleFonts.tajawal(fontSize: 18),
+                              ),
+                              backgroundColor: Colors.red.shade700,
+                            ),
+                          );
+                          return;
+                        }
+                        final isoDate =
+                            '${_selectedDate!.year.toString().padLeft(4, '0')}-'
+                            '${_selectedDate!.month.toString().padLeft(2, '0')}-'
+                            '${_selectedDate!.day.toString().padLeft(2, '0')}';
+                        final isoTime =
+                            '${_selectedTime!.hour.toString().padLeft(2, '0')}:'
+                            '${_selectedTime!.minute.toString().padLeft(2, '0')}:00';
+                        final res = await ApiService.instance.addAppointment(
+                          date: isoDate,
+                          time: isoTime,
+                          dateType: _appointmentName,
+                          location: '',
+                          note: '',
+                          elderlyId: seniorId,
+                        );
+                        if (!mounted) return;
+                        if (res['status'] != 'success') {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                res['message']?.toString() ??
+                                    'تعذّر حفظ الموعد على الخادم',
+                                style: GoogleFonts.tajawal(fontSize: 18),
+                              ),
+                              backgroundColor: Colors.red.shade700,
+                            ),
+                          );
+                          return;
+                        }
                         final dateStr = _formatArabicDate(_selectedDate!);
                         final timeStr = _formatArabicTime(_selectedTime!);
                         final result =
@@ -632,8 +676,11 @@ class _AddDateScreenState extends State<AddDateScreen> {
                           'title': _appointmentName,
                           'day': dateStr,
                           'time': 'الساعة $timeStr',
+                          'id': res['data']?['Appointment_ID']?.toString() ??
+                              res['Appointment_ID']?.toString(),
+                          'date': isoDate,
                         };
-                        _showSuccessDialog(result, appointmentData);
+                        await _showSuccessDialog(result, appointmentData);
                       },
                       child: Container(
                         width: double.infinity,

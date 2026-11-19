@@ -79,14 +79,20 @@ class _RegisterPageState extends State<RegisterPage> {
 
         if (res['status'] == 'success') {
           final caregiver = res['caregiver'];
+          final caregiverId =
+              int.tryParse(caregiver['Caregivers_ID']?.toString() ?? '') ?? 0;
+          await AuthService().prepareForUserSwitch(
+            newRole: 'caregiver',
+            newUserId: caregiverId,
+          );
+          if (!mounted) return;
           AuthService().setCaregiverSession(
-            id: caregiver['Caregivers_ID'] ?? 0,
+            id: caregiverId,
             name: name,
             phone: phone,
             email: email,
             linkedElderlyId: null,
           );
-          SeniorManager().clear();
           Navigator.pushNamed(context, '/link-senior');
         } else {
           final errorMsg = res['message']?.toString() ?? 'فشل إنشاء الحساب';
@@ -126,16 +132,26 @@ class _RegisterPageState extends State<RegisterPage> {
 
         if (res['status'] == 'success') {
           final elderly = res['elderly'];
+          final seniorIdInt =
+              int.tryParse(elderly['Eldery_ID']?.toString() ?? '') ?? 0;
+          await AuthService().prepareForUserSwitch(
+            newRole: 'senior',
+            newUserId: seniorIdInt,
+          );
+          if (!mounted) return;
           AuthService().setSeniorSession(
-            id: elderly['Eldery_ID'] ?? 0,
+            id: seniorIdInt,
             name: name,
             phone: phone,
             email: email,
           );
           await SeniorManager().fetchSeniorsFromDatabase();
+          if (!mounted) return;
           final prefs = await SharedPreferences.getInstance();
           if (!mounted) return;
-          final savedMode = prefs.getString('senior_mode');
+          final seniorId = elderly['Eldery_ID']?.toString() ?? '';
+          final savedMode =
+              seniorId.isEmpty ? null : prefs.getString('senior_mode_$seniorId');
           if (savedMode == 'simple') {
             Navigator.pushNamedAndRemoveUntil(
               context,

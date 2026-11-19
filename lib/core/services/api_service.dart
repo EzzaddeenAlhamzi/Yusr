@@ -16,16 +16,21 @@ class ApiService {
   static final ApiService instance = ApiService._();
 
   /// Callback when API returns 401 (optional UI navigation hook).
-  static void Function()? onUnauthorized;
+  /// Receives last known client role (may be null) for login navigation.
+  static void Function(String? role)? onUnauthorized;
 
   static bool _hooksWired = false;
 
-  /// Wire logout revoke hook once (avoids AuthService ↔ ApiService import cycles).
+  /// Wire logout revoke + /me hooks once (avoids AuthService ↔ ApiService cycles).
   void _ensureAuthHooks() {
     if (_hooksWired) return;
     _hooksWired = true;
     AuthService.remoteLogoutHook = logoutRemote;
+    AuthService.meFetcher = fetchCurrentUser;
   }
+
+  /// Public alias for cold-start bootstrap.
+  void ensureAuthHooksForSession() => _ensureAuthHooks();
 
   static const String officeLANBaseUrl =
       'http://192.168.0.252/yusr_api/index.php';
@@ -113,6 +118,23 @@ class ApiService {
     return '$scheme://$host:$port';
   }
 
+  /// True only when this attempt would attach Authorization Bearer.
+  ///
+  /// Session invalidation on HTTP 401 must use this — not mere token presence —
+  /// so a 401 from `:8000` / untrusted hosts (where Bearer is never sent) cannot
+  /// clear a valid local session or force Welcome/logout navigation.
+  @visibleForTesting
+  static bool wouldAttachBearer({
+    required bool attachBearer,
+    required String? token,
+    required String url,
+  }) {
+    return attachBearer &&
+        token != null &&
+        token.trim().isNotEmpty &&
+        isTrustedBearerUrl(url);
+  }
+
   /// Whether Authorization Bearer may be attached for [url].
   /// Strict: scheme+host+port must match [trustedBearerOrigins]; path must be
   /// `/api/legacy` or `yusr_api`. Never attaches to `:8000`, redirects' foreign
@@ -151,7 +173,11 @@ class ApiService {
     if (res['status'] != 'success') return;
     final token = res['token']?.toString();
     if (token == null || token.isEmpty) return;
-    final role = res['role']?.toString();
+    // Infer role from payload when register omits it; normalize elderly→senior.
+    String? role = AuthService.normalizeClientRole(res['role']?.toString());
+    role ??= res['caregiver'] != null
+        ? 'caregiver'
+        : (res['elderly'] != null ? 'senior' : null);
     await TokenStorage.instance.saveToken(token, role: role);
   }
 
@@ -503,11 +529,34 @@ class ApiService {
     }, attachBearer: false);
   }
 
-  /// إبطال التوكن على الخادم (إن أمكن) — لا يرمي عند فشل الشبكة.
-  Future<void> logoutRemote() async {
+  /// إبطال التوكن على الخادم.
+  /// Returns true when revocation succeeded or token was already invalid.
+  /// Returns false on network/connection failure (do not claim server revoke).
+  Future<bool> logoutRemote() async {
+    final existing = await TokenStorage.instance.readToken();
+    if (existing == null || existing.trim().isEmpty) {
+      return true;
+    }
     try {
-      await _sendRequest({'action': 'logout'}, attachBearer: true);
-    } catch (_) {}
+      final res = await _sendRequest({'action': 'logout'}, attachBearer: true);
+      if (res['status'] == 'success') return true;
+      if (res['http_status'] == 401 ||
+          res['error_type'] == 'unauthenticated') {
+        return true;
+      }
+      if (res['is_connection_error'] == true ||
+          res['error_type'] == 'connection_error') {
+        return false;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// P1.3: validate Sanctum session via legacy `me` / REST-equivalent.
+  Future<Map<String, dynamic>> fetchCurrentUser() async {
+    return _sendRequest({'action': 'me'}, attachBearer: true);
   }
 
   /// جلب قائمة كبار السن المسجلين في قاعدة البيانات
@@ -1067,10 +1116,12 @@ class ApiService {
         request.headers.set(HttpHeaders.acceptHeader, 'application/json');
 
         // Bearer only on trusted Yusr API URLs — never :8000 / unrelated candidates.
-        if (attachBearer &&
-            token != null &&
-            token.isNotEmpty &&
-            isTrustedBearerUrl(url)) {
+        final bearerAttached = wouldAttachBearer(
+          attachBearer: attachBearer,
+          token: token,
+          url: url,
+        );
+        if (bearerAttached) {
           request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
         }
 
@@ -1082,9 +1133,15 @@ class ApiService {
         final responseBody = await response.transform(utf8.decoder).join();
 
         if (response.statusCode == 401) {
-          await TokenStorage.instance.clear();
-          AuthService().clearSessionLocal();
-          onUnauthorized?.call();
+          // Invalidate session ONLY when Bearer was actually attached to a
+          // trusted authenticated API. A 401 from :8000 / untrusted hosts (or
+          // attachBearer:false probes) must never clear a valid local session.
+          if (bearerAttached) {
+            final lastRole = AuthService().role;
+            await TokenStorage.instance.clear();
+            AuthService().clearSessionLocal();
+            onUnauthorized?.call(lastRole);
+          }
           Map<String, dynamic> data = {
             'status': 'error',
             'error_type': 'unauthenticated',

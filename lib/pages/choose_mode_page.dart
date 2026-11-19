@@ -10,6 +10,25 @@ class ChooseModePage extends StatefulWidget {
 
   @override
   State<ChooseModePage> createState() => _ChooseModePageState();
+
+  /// Persist mode for a verified logged-in user only.
+  ///
+  /// Never writes global `senior_mode` / location / notifications keys — those
+  /// leak private UI state across caregiver↔elderly account switches (A4/gate).
+  /// Pre-login callers should pass mode via route arguments instead.
+  @visibleForTesting
+  static Future<void> persistModeForAuthenticatedUser({
+    required String modeStr,
+    required int? userId,
+    required bool isLoggedIn,
+  }) async {
+    if (!isLoggedIn || userId == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('senior_mode_$userId', modeStr);
+    await prefs.setBool('senior_setup_done_$userId', true);
+    await prefs.setBool('senior_location_allowed_$userId', true);
+    await prefs.setBool('senior_notifications_allowed_$userId', true);
+  }
 }
 
 class _ChooseModePageState extends State<ChooseModePage> {
@@ -18,18 +37,14 @@ class _ChooseModePageState extends State<ChooseModePage> {
 
   Future<void> _onContinue() async {
     final modeStr = selectedMode == 0 ? 'simple' : 'advanced';
-    
-    // حفظ الوضع المختار وإعدادات المستخدم في التخزين الدائم
+
+    // Persist only verified per-user keys. Pre-login: mode via route args only.
     try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('senior_mode', modeStr);
-      final uid = AuthService().userId;
-      if (uid != null) {
-        await prefs.setString('senior_mode_$uid', modeStr);
-        await prefs.setBool('senior_setup_done_$uid', true);
-      }
-      await prefs.setBool('senior_location_allowed', true);
-      await prefs.setBool('senior_notifications_allowed', true);
+      await ChooseModePage.persistModeForAuthenticatedUser(
+        modeStr: modeStr,
+        userId: AuthService().userId,
+        isLoggedIn: AuthService().isLoggedIn,
+      );
     } catch (_) {}
 
     if (!mounted) return;

@@ -58,10 +58,16 @@ class _LoginPageState extends State<LoginPage> {
 
         if (res['status'] == 'success') {
           final elderly = res['elderly'];
+          final seniorIdInt =
+              int.tryParse(elderly['Eldery_ID']?.toString() ?? '') ?? 0;
+          await AuthService().prepareForUserSwitch(
+            newRole: 'senior',
+            newUserId: seniorIdInt,
+          );
           final rawName = elderly['E_Name']?.toString().trim() ?? '';
           final validName = (rawName.isEmpty || RegExp(r'^[\?\s]+$').hasMatch(rawName)) ? 'كبير السن' : rawName;
           AuthService().setSeniorSession(
-            id: elderly['Eldery_ID'] ?? 0,
+            id: seniorIdInt,
             name: validName,
             phone: elderly['E_PhonNumber'] ?? phone,
             email: elderly['E_Email'],
@@ -69,11 +75,12 @@ class _LoginPageState extends State<LoginPage> {
           await SeniorManager().fetchSeniorsFromDatabase();
           if (!mounted) return;
 
-          // التحقق من الوضع المحفوظ مسبقاً (البسيط أو المتقدم) لتفادي إعادة شاشة اختيار الوضع والموقع والتنبيهات
+          // التحقق من الوضع المحفوظ مسبقاً (البسيط أو المتقدم) — مفتاح المستخدم فقط (A4).
           final prefs = await SharedPreferences.getInstance();
           if (!mounted) return;
           final seniorId = elderly['Eldery_ID']?.toString() ?? '';
-          final savedMode = prefs.getString('senior_mode_$seniorId') ?? prefs.getString('senior_mode');
+          final savedMode =
+              seniorId.isEmpty ? null : prefs.getString('senior_mode_$seniorId');
 
           if (savedMode == 'simple') {
             Navigator.pushNamedAndRemoveUntil(
@@ -130,11 +137,17 @@ class _LoginPageState extends State<LoginPage> {
 
         if (res['status'] == 'success') {
           final caregiver = res['caregiver'];
+          final caregiverId =
+              int.tryParse(caregiver['Caregivers_ID']?.toString() ?? '') ?? 0;
+          await AuthService().prepareForUserSwitch(
+            newRole: 'caregiver',
+            newUserId: caregiverId,
+          );
           final int? linkedId = caregiver['Eldery_ID'] != null ? int.tryParse(caregiver['Eldery_ID'].toString()) : null;
           final rawName = caregiver['C_Name']?.toString().trim() ?? '';
           final validName = (rawName.isEmpty || RegExp(r'^[\?\s]+$').hasMatch(rawName)) ? 'مقدم الرعاية' : rawName;
           AuthService().setCaregiverSession(
-            id: caregiver['Caregivers_ID'] ?? 0,
+            id: caregiverId,
             name: validName,
             phone: caregiver['C_PhonNumber'] ?? phone,
             email: caregiver['C_Email'],

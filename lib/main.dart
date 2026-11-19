@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'core/constants/app_theme.dart';
+import 'core/services/api_service.dart';
+import 'core/widgets/auth_route_guard.dart';
+import 'core/widgets/session_bootstrap_page.dart';
 import 'pages/welcome_page.dart';
 import 'pages/onboarding_page.dart';
 import 'pages/who_are_you_page.dart';
@@ -47,16 +50,56 @@ import 'pages/senior_help_page.dart';
 import 'pages/senior_notifications_page.dart';
 import 'pages/senior_link_code_page.dart';
 import 'pages/senior_link_success_page.dart';
-import 'core/services/api_service.dart';
 import 'pages/senior_location_page.dart';
+
+/// Root navigator — used for 401 redirect without loops.
+final GlobalKey<NavigatorState> yusrNavigatorKey = GlobalKey<NavigatorState>();
+
+bool _unauthorizedNavInFlight = false;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  ApiService.instance.ensureAuthHooksForSession();
+  ApiService.onUnauthorized = _handleUnauthorized;
 
   // ─── فحص الاتصال بقاعدة البيانات عند بدء التطبيق (Health Check) ───
   _runStartupHealthCheck();
 
   runApp(const YusrApp());
+}
+
+/// Public auth / marketing surfaces — 401 must never bounce these to caregiver login.
+const Set<String> _publicAuthRoutes = {
+  '/',
+  '/welcome',
+  '/login',
+  '/register',
+  '/onboarding',
+  '/who-are-you',
+  '/choose-mode',
+};
+
+void _handleUnauthorized(String? _) {
+  // Argument ignored on purpose: caregiver-default /login blocked elderly UI (EMA).
+  if (_unauthorizedNavInFlight) return;
+  final nav = yusrNavigatorKey.currentState;
+  if (nav == null) return;
+
+  // NavigatorKey.context's ModalRoute is unreliable; read the top route name safely.
+  String? name;
+  nav.popUntil((route) {
+    name = route.settings.name;
+    return true;
+  });
+  if (name != null && _publicAuthRoutes.contains(name)) {
+    return;
+  }
+
+  _unauthorizedNavInFlight = true;
+  nav.pushNamedAndRemoveUntil('/welcome', (r) => false).whenComplete(() {
+    _unauthorizedNavInFlight = false;
+  });
 }
 
 /// فحص الاتصال بالخادم وقاعدة البيانات في الخلفية عند بدء التطبيق
@@ -108,6 +151,11 @@ void _runStartupHealthCheck() {
   });
 }
 
+Widget _caregiver(Widget child) =>
+    AuthRouteGuard(requiredRole: 'caregiver', child: child);
+
+Widget _senior(Widget child) =>
+    AuthRouteGuard(requiredRole: 'senior', child: child);
 
 /// التطبيق الرئيسي (Yusr App)
 class YusrApp extends StatelessWidget {
@@ -116,6 +164,7 @@ class YusrApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: yusrNavigatorKey,
       title: 'يُسر - معاً نهتم',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme.copyWith(
@@ -139,56 +188,62 @@ class YusrApp extends StatelessWidget {
       },
       initialRoute: '/',
       routes: {
-        // تدفق البداية والتسجيل
-        '/': (context) => const WelcomePage(),
+        // تدفق البداية والتسجيل — P1.3 bootstrap validates session first
+        '/': (context) => const SessionBootstrapPage(),
+        '/welcome': (context) => const WelcomePage(),
         '/onboarding': (context) => const OnboardingPage(),
         '/who-are-you': (context) => const WhoAreYouPage(),
         '/choose-mode': (context) => const ChooseModePage(),
         '/login': (context) => const LoginPage(),
         '/register': (context) => const RegisterPage(),
-        '/link-senior': (context) => const LinkSeniorPage(),
+        '/link-senior': (context) =>
+            _caregiver(const LinkSeniorPage()),
 
         // مسارات الوضع البسيط لكبير السن (Simple Elderly Mode)
-        '/simple-home': (context) => const SimpleHomePage(),
-        '/simple-contacts': (context) => const SimpleContactsPage(),
-        '/simple-medicines': (context) => const SimpleMedicinesPage(),
-        '/simple-return-home': (context) => const SimpleReturnHomePage(),
+        '/simple-home': (context) => _senior(const SimpleHomePage()),
+        '/simple-contacts': (context) => _senior(const SimpleContactsPage()),
+        '/simple-medicines': (context) => _senior(const SimpleMedicinesPage()),
+        '/simple-return-home': (context) =>
+            _senior(const SimpleReturnHomePage()),
 
         // مسارات مقدم الرعاية (Caregiver Flow)
-        '/main-caregiver': (context) => const MainCaregiverPage(),
-        '/medicines': (context) => const MedicinesPage(),
-        '/appointments': (context) => const AppointmentsPage(),
-        '/location': (context) => const LocationPage(),
-        '/health-status': (context) => const HealthStatusPage(),
-        '/senior-data': (context) => const SeniorDataPage(),
-        '/activity-log': (context) => const ActivityLogPage(),
-        '/devices': (context) => const DevicesPage(),
-        '/emergency': (context) => const EmergencyPage(),
-        '/notifications': (context) => const NotificationsPage(),
-        '/profile': (context) => const ProfilePageCaregiver(),
-        '/services': (context) => const ServicesPage(),
+        '/main-caregiver': (context) => _caregiver(const MainCaregiverPage()),
+        '/medicines': (context) => _caregiver(const MedicinesPage()),
+        '/appointments': (context) => _caregiver(const AppointmentsPage()),
+        '/location': (context) => _caregiver(const LocationPage()),
+        '/health-status': (context) => _caregiver(const HealthStatusPage()),
+        '/senior-data': (context) => _caregiver(const SeniorDataPage()),
+        '/activity-log': (context) => _caregiver(const ActivityLogPage()),
+        '/devices': (context) => _caregiver(const DevicesPage()),
+        '/emergency': (context) => _caregiver(const EmergencyPage()),
+        '/notifications': (context) => _caregiver(const NotificationsPage()),
+        '/profile': (context) => _caregiver(const ProfilePageCaregiver()),
+        '/services': (context) => _caregiver(const ServicesPage()),
 
         // مسارات وضع كبير السن (Elderly Flow)
-        '/home-elderly': (context) => const HomePage(),
-        '/dates': (context) => const DatesScreen(),
-        '/add-date': (context) => const AddDateScreen(),
-        '/past-dates': (context) => const PastDatesScreen(),
-        '/medicines-elderly': (context) => const MedicinesPageElderly(),
-        '/add-medicine': (context) => const AddMedicineScreen(),
-        '/location-elderly': (context) => const LocationPageElderly(),
-        '/emergency-elderly': (context) => const EmergencyPageElderly(),
-        '/profile-elderly': (context) => const ProfilePageElderly(),
-        '/caregiver-contact': (context) => const CaregiverPage(),
-        '/return-home': (context) => const ReturnHomePage(),
-        '/health': (context) => const HealthPage(),
-        '/devices-elderly': (context) => const DevicesPageElderly(),
-        '/elderly-devices': (context) => const DevicesPageElderly(),
-        '/ai': (context) => const AIPage(),
-        '/senior-help': (context) => const SeniorHelpPage(),
-        '/senior-notifications': (context) => const SeniorNotificationsPage(),
-        '/senior-link-code': (context) => const SeniorLinkCodePage(),
-        '/senior-link-success': (context) => const SeniorLinkSuccessPage(),
-        '/senior-location': (context) => const SeniorLocationPage(),
+        '/home-elderly': (context) => _senior(const HomePage()),
+        '/dates': (context) => _senior(const DatesScreen()),
+        '/add-date': (context) => _senior(const AddDateScreen()),
+        '/past-dates': (context) => _senior(const PastDatesScreen()),
+        '/medicines-elderly': (context) => _senior(const MedicinesPageElderly()),
+        '/add-medicine': (context) => _senior(const AddMedicineScreen()),
+        '/location-elderly': (context) => _senior(const LocationPageElderly()),
+        '/emergency-elderly': (context) =>
+            _senior(const EmergencyPageElderly()),
+        '/profile-elderly': (context) => _senior(const ProfilePageElderly()),
+        '/caregiver-contact': (context) => _senior(const CaregiverPage()),
+        '/return-home': (context) => _senior(const ReturnHomePage()),
+        '/health': (context) => _senior(const HealthPage()),
+        '/devices-elderly': (context) => _senior(const DevicesPageElderly()),
+        '/elderly-devices': (context) => _senior(const DevicesPageElderly()),
+        '/ai': (context) => _senior(const AIPage()),
+        '/senior-help': (context) => _senior(const SeniorHelpPage()),
+        '/senior-notifications': (context) =>
+            _senior(const SeniorNotificationsPage()),
+        '/senior-link-code': (context) => _senior(const SeniorLinkCodePage()),
+        '/senior-link-success': (context) =>
+            _senior(const SeniorLinkSuccessPage()),
+        '/senior-location': (context) => _senior(const SeniorLocationPage()),
       },
     );
   }

@@ -25,9 +25,13 @@ class TokenStorage {
     final clean = token.trim();
     if (clean.isEmpty) return;
     _cachedToken = clean;
-    await _storage.write(key: _tokenKey, value: clean);
-    if (role != null && role.isNotEmpty) {
-      await _storage.write(key: _roleKey, value: role);
+    try {
+      await _storage.write(key: _tokenKey, value: clean);
+      if (role != null && role.isNotEmpty) {
+        await _storage.write(key: _roleKey, value: role);
+      }
+    } catch (_) {
+      // Memory cache still holds the token for this process.
     }
   }
 
@@ -37,7 +41,14 @@ class TokenStorage {
       return _cachedToken;
     }
     try {
-      _cachedToken = await _storage.read(key: _tokenKey);
+      final raw = await _storage.read(key: _tokenKey);
+      final clean = raw?.trim();
+      // Corrupt / empty secure values must not become a pseudo-session.
+      if (clean == null || clean.isEmpty) {
+        _cachedToken = null;
+        return null;
+      }
+      _cachedToken = clean;
     } catch (_) {
       _cachedToken = null;
     }
@@ -46,7 +57,10 @@ class TokenStorage {
 
   Future<String?> readRole() async {
     try {
-      return await _storage.read(key: _roleKey);
+      final raw = await _storage.read(key: _roleKey);
+      final clean = raw?.trim();
+      if (clean == null || clean.isEmpty) return null;
+      return clean;
     } catch (_) {
       return null;
     }

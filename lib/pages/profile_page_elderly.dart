@@ -557,13 +557,25 @@ class _ProfilePageElderlyState extends State<ProfilePageElderly> {
           ElevatedButton(
             onPressed: () async {
               final navigator = Navigator.of(context);
+              final messenger = ScaffoldMessenger.of(context);
               Navigator.pop(ctx);
-              await AuthService().logout();
+              final result = await AuthService().logout();
               if (!mounted) return;
+              if (!result.serverRevoked) {
+                messenger.showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'تم تسجيل الخروج محلياً. تعذّر تأكيد إلغاء الجلسة على الخادم بسبب الشبكة.',
+                      style: GoogleFonts.tajawal(),
+                    ),
+                    backgroundColor: Colors.orange.shade800,
+                    duration: const Duration(seconds: 4),
+                  ),
+                );
+              }
               navigator.pushNamedAndRemoveUntil(
-                '/login',
+                '/welcome',
                 (route) => false,
-                arguments: {'role': 'senior'},
               );
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade700),

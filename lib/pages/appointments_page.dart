@@ -13,6 +13,16 @@ class AppointmentsPage extends StatefulWidget {
 
   @override
   State<AppointmentsPage> createState() => _AppointmentsPageState();
+
+  /// Test hook — invalid calendar dates must not be treated as success.
+  @visibleForTesting
+  static bool isValidAppointmentDateForTest(String raw) =>
+      _AppointmentsPageState._isValidAppointmentDate(raw);
+
+  /// Test hook — never surface raw SQLSTATE to the caregiver.
+  @visibleForTesting
+  static String appointmentErrorMessageForTest(Map<String, dynamic> res) =>
+      _AppointmentsPageState._appointmentErrorMessage(res);
 }
 
 class _AppointmentsPageState extends State<AppointmentsPage> {
@@ -137,6 +147,33 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  /// True only for real calendar dates (rejects `2026-13-40`).
+  static bool _isValidAppointmentDate(String raw) {
+    final text = raw.trim();
+    final match = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(text);
+    if (match == null) return false;
+    final year = int.tryParse(match.group(1)!);
+    final month = int.tryParse(match.group(2)!);
+    final day = int.tryParse(match.group(3)!);
+    if (year == null || month == null || day == null) return false;
+    if (month < 1 || month > 12 || day < 1 || day > 31) return false;
+    final dt = DateTime.tryParse(text);
+    if (dt == null) return false;
+    return dt.year == year && dt.month == month && dt.day == day;
+  }
+
+  static String _appointmentErrorMessage(Map<String, dynamic> res) {
+    final raw = res['message']?.toString().trim() ?? '';
+    if (raw.isEmpty) return 'تعذّر حفظ الموعد على الخادم';
+    // Never surface raw SQLSTATE / stack noise to the caregiver.
+    if (raw.contains('SQLSTATE') ||
+        raw.toLowerCase().contains('exception') ||
+        raw.contains('Incorrect date')) {
+      return 'تاريخ الموعد غير صالح أو تعذّر حفظه على الخادم.';
+    }
+    return raw;
   }
 
   IconData _getIconForType(String type) {
@@ -895,7 +932,7 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
     );
   }
 
-  void _showAddAppointmentDialog(BuildContext context) {
+  void _showAddAppointmentDialog(BuildContext pageContext) {
     String selectedType = 'موعد طبيب';
     String selectedAdvance = 'قبل الموعد بساعة';
     final customTitleController = TextEditingController();
@@ -904,6 +941,9 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
     final timeController = TextEditingController(text: '09:00');
     final doctorController = TextEditingController();
     final locationController = TextEditingController();
+    // Capture page messenger before dialog — StatefulBuilder shadows `context`
+    // and after Navigator.pop the dialog context is unmounted (silent fail).
+    final pageMessenger = ScaffoldMessenger.of(pageContext);
 
     final appointmentTypes = [
       'موعد طبيب',
@@ -923,10 +963,10 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
     ];
 
     showDialog(
-      context: context,
+      context: pageContext,
       builder: (ctx) {
         return StatefulBuilder(
-          builder: (context, setDialogState) {
+          builder: (dialogContext, setDialogState) {
             return Directionality(
               textDirection: TextDirection.rtl,
               child: AlertDialog(
@@ -1127,32 +1167,59 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                           ? customTitleController.text.trim()
                           : selectedType;
 
+                      final dateText = dateController.text.trim().isEmpty
+                          ? DateTime.now()
+                              .toIso8601String()
+                              .split('T')
+                              .first
+                          : dateController.text.trim();
+                      if (!_isValidAppointmentDate(dateText)) {
+                        pageMessenger.showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'تاريخ الموعد غير صالح. استخدم صيغة YYYY-MM-DD صحيحة.',
+                              style: GoogleFonts.cairo(),
+                            ),
+                            backgroundColor: Colors.red.shade700,
+                          ),
+                        );
+                        return;
+                      }
+
                       Navigator.pop(ctx);
                       final senior = SeniorManager().currentSenior;
                       final int? seniorId = int.tryParse(senior.id);
-                      final res = await ApiService.instance.addAppointment(
-                        date: dateController.text.trim().isEmpty
-                            ? DateTime.now()
-                                .toIso8601String()
-                                .split('T')
-                                .first
-                            : dateController.text.trim(),
-                        time: timeController.text.trim().isEmpty
-                            ? '09:00:00'
-                            : '${timeController.text.trim()}:00',
-                        dateType: finalTitle,
-                        location: locationController.text.trim(),
-                        note: doctorController.text.trim(),
-                        elderlyId: seniorId,
-                      );
-
-                      if (!context.mounted) return;
-                      if (res['status'] != 'success') {
-                        ScaffoldMessenger.of(context).showSnackBar(
+                      Map<String, dynamic> res;
+                      try {
+                        res = await ApiService.instance.addAppointment(
+                          date: dateText,
+                          time: timeController.text.trim().isEmpty
+                              ? '09:00:00'
+                              : '${timeController.text.trim()}:00',
+                          dateType: finalTitle,
+                          location: locationController.text.trim(),
+                          note: doctorController.text.trim(),
+                          elderlyId: seniorId,
+                        );
+                      } catch (_) {
+                        pageMessenger.showSnackBar(
                           SnackBar(
                             content: Text(
-                              res['message']?.toString() ??
-                                  'تعذّر حفظ الموعد على الخادم',
+                              'تعذّر حفظ الموعد على الخادم',
+                              style: GoogleFonts.cairo(),
+                            ),
+                            backgroundColor: Colors.red.shade700,
+                          ),
+                        );
+                        return;
+                      }
+
+                      // Use page messenger — dialogContext is unmounted after pop.
+                      if (res['status'] != 'success') {
+                        pageMessenger.showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              _appointmentErrorMessage(res),
                               style: GoogleFonts.cairo(),
                             ),
                             backgroundColor: Colors.red.shade700,
@@ -1170,6 +1237,7 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                         await prefs.setString(remKey, selectedAdvance);
                       }
 
+                      if (!mounted) return;
                       await _loadAppointments();
                     },
                     style: ElevatedButton.styleFrom(
@@ -1190,7 +1258,7 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
   }
 
   void _showEditAppointmentDialog(
-      BuildContext context, Map<String, dynamic> item, int index) {
+      BuildContext pageContext, Map<String, dynamic> item, int index) {
     String selectedType = item['title'] ?? 'موعد طبيب';
     String selectedAdvance = item['advanceReminder'] ?? 'قبل الموعد بساعة';
     final dateController = TextEditingController(text: item['date'] ?? '');
@@ -1198,6 +1266,7 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
     final doctorController = TextEditingController(text: item['doctor'] ?? '');
     final locationController =
         TextEditingController(text: item['location'] ?? '');
+    final pageMessenger = ScaffoldMessenger.of(pageContext);
 
     final appointmentTypes = [
       'موعد طبيب',
@@ -1221,10 +1290,10 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
     ];
 
     showDialog(
-      context: context,
+      context: pageContext,
       builder: (ctx) {
         return StatefulBuilder(
-          builder: (context, setDialogState) {
+          builder: (dialogContext, setDialogState) {
             return Directionality(
               textDirection: TextDirection.rtl,
               child: AlertDialog(
@@ -1404,7 +1473,7 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                       // No appointment UPDATE route in Laravel API yet —
                       // do not fake success via silent delete+recreate.
                       Navigator.pop(ctx);
-                      ScaffoldMessenger.of(context).showSnackBar(
+                      pageMessenger.showSnackBar(
                         SnackBar(
                           content: Text(
                             'تعديل الموعد على الخادم غير متاح حالياً. احذف الموعد وأضفه من جديد.',

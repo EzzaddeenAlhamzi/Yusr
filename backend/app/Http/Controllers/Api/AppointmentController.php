@@ -64,14 +64,39 @@ class AppointmentController extends Controller
             ], 200);
         }
 
-        $appointment = Appointment::create([
-            'A_Time' => $time,
-            'A_Date' => $date,
-            'A_DateType' => $dateType,
-            'A_Location' => $location,
-            'A_Note' => $note,
-            'Elderly_ID' => $gated,
-        ]);
+        // Reject impossible calendar dates before MySQL (avoids SQLSTATE[22007] 500).
+        if (! is_string($date) || ! preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+            return response()->json([
+                'status' => 'error',
+                'error_type' => 'invalid_date',
+                'message' => 'تاريخ الموعد غير صالح. استخدم صيغة YYYY-MM-DD صحيحة.',
+            ], 200);
+        }
+        [$year, $month, $day] = array_map('intval', explode('-', $date));
+        if (! checkdate($month, $day, $year)) {
+            return response()->json([
+                'status' => 'error',
+                'error_type' => 'invalid_date',
+                'message' => 'تاريخ الموعد غير صالح. استخدم صيغة YYYY-MM-DD صحيحة.',
+            ], 200);
+        }
+
+        try {
+            $appointment = Appointment::create([
+                'A_Time' => $time,
+                'A_Date' => $date,
+                'A_DateType' => $dateType,
+                'A_Location' => $location,
+                'A_Note' => $note,
+                'Elderly_ID' => $gated,
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status' => 'error',
+                'error_type' => 'save_failed',
+                'message' => 'تعذّر حفظ الموعد على الخادم',
+            ], 200);
+        }
 
         return response()->json([
             'status' => 'success',

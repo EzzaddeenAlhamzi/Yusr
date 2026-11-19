@@ -1173,8 +1173,27 @@ class ApiService {
         }
 
         if (responseBody.isNotEmpty) {
-          final data = jsonDecode(responseBody) as Map<String, dynamic>;
+          final decoded = jsonDecode(responseBody);
+          if (decoded is! Map<String, dynamic>) {
+            return {
+              'status': 'error',
+              'message': 'استجابة غير متوقعة من الخادم',
+              'http_status': response.statusCode,
+            };
+          }
+          final data = Map<String, dynamic>.from(decoded);
           _workingUrl = url;
+          // Normalize non-success HTTP / missing status (e.g. Laravel 500 SQLSTATE)
+          // so callers never treat raw exceptions as empty success.
+          if (response.statusCode >= 400 && data['status'] != 'error') {
+            data['status'] = 'error';
+            data['http_status'] = response.statusCode;
+            data['message'] ??= 'تعذّر إتمام العملية على الخادم';
+          } else if (data['status'] == null && response.statusCode >= 400) {
+            data['status'] = 'error';
+            data['http_status'] = response.statusCode;
+            data['message'] ??= 'تعذّر إتمام العملية على الخادم';
+          }
           return data;
         }
       } catch (e) {

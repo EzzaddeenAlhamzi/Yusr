@@ -108,4 +108,102 @@ void main() {
       isFalse,
     );
   });
+
+  group('wouldAttachBearer / 401 session invalidation gate', () {
+    const trusted = 'http://127.0.0.1:8088/api/legacy';
+    const untrusted8000 = 'http://127.0.0.1:8000/api/legacy';
+    const untrustedHost = 'http://evil.com/api/legacy';
+
+    test('POSITIVE: trusted URL + token + attachBearer → would attach', () {
+      expect(
+        ApiService.wouldAttachBearer(
+          attachBearer: true,
+          token: 'sess-token',
+          url: trusted,
+        ),
+        isTrue,
+      );
+    });
+
+    test('POSITIVE: empty/whitespace token never attaches even on trusted URL',
+        () {
+      expect(
+        ApiService.wouldAttachBearer(
+          attachBearer: true,
+          token: null,
+          url: trusted,
+        ),
+        isFalse,
+      );
+      expect(
+        ApiService.wouldAttachBearer(
+          attachBearer: true,
+          token: '',
+          url: trusted,
+        ),
+        isFalse,
+      );
+      expect(
+        ApiService.wouldAttachBearer(
+          attachBearer: true,
+          token: '   ',
+          url: trusted,
+        ),
+        isFalse,
+      );
+    });
+
+    test('NEGATIVE: stored token + :8000 must NOT attach (no false logout)', () {
+      expect(
+        ApiService.wouldAttachBearer(
+          attachBearer: true,
+          token: 'still-valid-session',
+          url: untrusted8000,
+        ),
+        isFalse,
+      );
+    });
+
+    test('NEGATIVE: stored token + untrusted host must NOT attach', () {
+      expect(
+        ApiService.wouldAttachBearer(
+          attachBearer: true,
+          token: 'still-valid-session',
+          url: untrustedHost,
+        ),
+        isFalse,
+      );
+    });
+
+    test('NEGATIVE: attachBearer false never attaches even on trusted URL', () {
+      expect(
+        ApiService.wouldAttachBearer(
+          attachBearer: false,
+          token: 'sess-token',
+          url: trusted,
+        ),
+        isFalse,
+      );
+    });
+
+    test(
+      '401 invalidation mirrors attach: only trusted authenticated attempts',
+      () {
+        // Contract used by ApiService._sendRequest: clear + onUnauthorized
+        // only when wouldAttachBearer is true for that attempt.
+        final shouldInvalidateTrusted = ApiService.wouldAttachBearer(
+          attachBearer: true,
+          token: 'tok',
+          url: trusted,
+        );
+        final shouldInvalidate8000 = ApiService.wouldAttachBearer(
+          attachBearer: true,
+          token: 'tok',
+          url: untrusted8000,
+        );
+        expect(shouldInvalidateTrusted, isTrue);
+        expect(shouldInvalidate8000, isFalse);
+      },
+    );
+  });
 }

@@ -118,6 +118,23 @@ class ApiService {
     return '$scheme://$host:$port';
   }
 
+  /// True only when this attempt would attach Authorization Bearer.
+  ///
+  /// Session invalidation on HTTP 401 must use this — not mere token presence —
+  /// so a 401 from `:8000` / untrusted hosts (where Bearer is never sent) cannot
+  /// clear a valid local session or force Welcome/logout navigation.
+  @visibleForTesting
+  static bool wouldAttachBearer({
+    required bool attachBearer,
+    required String? token,
+    required String url,
+  }) {
+    return attachBearer &&
+        token != null &&
+        token.trim().isNotEmpty &&
+        isTrustedBearerUrl(url);
+  }
+
   /// Whether Authorization Bearer may be attached for [url].
   /// Strict: scheme+host+port must match [trustedBearerOrigins]; path must be
   /// `/api/legacy` or `yusr_api`. Never attaches to `:8000`, redirects' foreign
@@ -1099,10 +1116,12 @@ class ApiService {
         request.headers.set(HttpHeaders.acceptHeader, 'application/json');
 
         // Bearer only on trusted Yusr API URLs — never :8000 / unrelated candidates.
-        if (attachBearer &&
-            token != null &&
-            token.isNotEmpty &&
-            isTrustedBearerUrl(url)) {
+        final bearerAttached = wouldAttachBearer(
+          attachBearer: attachBearer,
+          token: token,
+          url: url,
+        );
+        if (bearerAttached) {
           request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
         }
 
@@ -1114,13 +1133,13 @@ class ApiService {
         final responseBody = await response.transform(utf8.decoder).join();
 
         if (response.statusCode == 401) {
-          // Only navigate away when a Bearer was actually sent. Unauthenticated
-          // probes (startup health get_services, etc.) must NOT force caregiver /login.
-          final hadBearer = token != null && token.trim().isNotEmpty;
-          final lastRole = AuthService().role;
-          await TokenStorage.instance.clear();
-          AuthService().clearSessionLocal();
-          if (hadBearer) {
+          // Invalidate session ONLY when Bearer was actually attached to a
+          // trusted authenticated API. A 401 from :8000 / untrusted hosts (or
+          // attachBearer:false probes) must never clear a valid local session.
+          if (bearerAttached) {
+            final lastRole = AuthService().role;
+            await TokenStorage.instance.clear();
+            AuthService().clearSessionLocal();
             onUnauthorized?.call(lastRole);
           }
           Map<String, dynamic> data = {

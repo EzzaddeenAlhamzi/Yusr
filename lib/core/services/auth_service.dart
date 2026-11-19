@@ -169,7 +169,9 @@ class AuthService extends ChangeNotifier {
         }
         if (includePerUserModeKeys &&
             (key.startsWith('senior_mode_') ||
-                key.startsWith('senior_setup_done_'))) {
+                key.startsWith('senior_setup_done_') ||
+                key.startsWith('senior_location_allowed_') ||
+                key.startsWith('senior_notifications_allowed_'))) {
           await prefs.remove(key);
         }
       }

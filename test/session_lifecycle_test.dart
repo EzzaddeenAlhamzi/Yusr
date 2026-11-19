@@ -1,7 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:yusr1/core/services/api_service.dart';
 import 'package:yusr1/core/services/auth_service.dart';
 import 'package:yusr1/core/services/token_storage.dart';
+import 'package:yusr1/pages/choose_mode_page.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -213,10 +215,18 @@ void main() {
 
   group('EMA cold-start after logout', () {
     test('401 without Bearer must not imply an authenticated session', () {
-      // Contract: hadBearer=false → clear local state only; no caregiver /login redirect.
-      // (Navigation gating lives in ApiService._sendRequest + main._handleUnauthorized.)
+      // Contract: wouldAttachBearer=false → do NOT clear token / do NOT navigate.
+      // (Gating lives in ApiService._sendRequest + main._handleUnauthorized.)
       expect(AuthService().isLoggedIn, isFalse);
       expect(AuthService.normalizeClientRole(null), isNull);
+      expect(
+        ApiService.wouldAttachBearer(
+          attachBearer: true,
+          token: 'present-but-not-sent-to-8000',
+          url: 'http://127.0.0.1:8000/api/legacy',
+        ),
+        isFalse,
+      );
     });
 
     test('unauthenticated restore outcome is Welcome path (not caregiver login)',
@@ -229,6 +239,100 @@ void main() {
       final outcome = await AuthService().restoreSession();
       expect(outcome, SessionRestoreOutcome.unauthenticated);
       expect(await AuthService().homeRouteForSession(), '/welcome');
+    });
+
+    test(
+      'POSITIVE: trusted authenticated 401 may invalidate session (attach gate)',
+      () {
+        expect(
+          ApiService.wouldAttachBearer(
+            attachBearer: true,
+            token: 'live-session',
+            url: 'http://127.0.0.1:8088/api/legacy',
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'NEGATIVE: untrusted 401 with stored token must not invalidate session',
+      () {
+        expect(
+          ApiService.wouldAttachBearer(
+            attachBearer: true,
+            token: 'live-session',
+            url: 'http://127.0.0.1:8000/api/legacy',
+          ),
+          isFalse,
+        );
+      },
+    );
+  });
+
+  group('ChooseModePage cross-user preferences', () {
+    test('POSITIVE: logged-in user writes only per-user keys', () async {
+      SharedPreferences.setMockInitialValues({});
+      await ChooseModePage.persistModeForAuthenticatedUser(
+        modeStr: 'simple',
+        userId: 44,
+        isLoggedIn: true,
+      );
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('senior_mode_44'), 'simple');
+      expect(prefs.getBool('senior_setup_done_44'), isTrue);
+      expect(prefs.getBool('senior_location_allowed_44'), isTrue);
+      expect(prefs.getBool('senior_notifications_allowed_44'), isTrue);
+      // Globals must never be written.
+      expect(prefs.getString('senior_mode'), isNull);
+      expect(prefs.getBool('senior_location_allowed'), isNull);
+      expect(prefs.getBool('senior_notifications_allowed'), isNull);
+      expect(prefs.getBool('senior_setup_done'), isNull);
+    });
+
+    test('NEGATIVE: pre-login / no uid writes nothing (no global leak)',
+        () async {
+      SharedPreferences.setMockInitialValues({
+        'senior_mode_99': 'advanced', // other user must stay untouched
+      });
+      await ChooseModePage.persistModeForAuthenticatedUser(
+        modeStr: 'simple',
+        userId: null,
+        isLoggedIn: false,
+      );
+      await ChooseModePage.persistModeForAuthenticatedUser(
+        modeStr: 'simple',
+        userId: 12,
+        isLoggedIn: false,
+      );
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('senior_mode'), isNull);
+      expect(prefs.getString('senior_mode_12'), isNull);
+      expect(prefs.getString('senior_mode_99'), 'advanced');
+      expect(prefs.getBool('senior_location_allowed'), isNull);
+      expect(prefs.getBool('senior_notifications_allowed'), isNull);
+    });
+
+    test('switch scrub clears per-user mode keys of prior user', () async {
+      SharedPreferences.setMockInitialValues({
+        'senior_mode_44': 'simple',
+        'senior_setup_done_44': true,
+        'senior_location_allowed_44': true,
+        'senior_notifications_allowed_44': true,
+        'senior_mode': 'advanced', // legacy global still scrubbed
+        'custom_api_url': 'http://127.0.0.1:8088/api/legacy',
+      });
+      await AuthService().clearUserScopedCaches(includePerUserModeKeys: true);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('senior_mode_44'), isNull);
+      expect(prefs.getBool('senior_setup_done_44'), isNull);
+      expect(prefs.getBool('senior_location_allowed_44'), isNull);
+      expect(prefs.getBool('senior_notifications_allowed_44'), isNull);
+      expect(prefs.getString('senior_mode'), isNull);
+      expect(
+        prefs.getString('custom_api_url'),
+        'http://127.0.0.1:8088/api/legacy',
+      );
     });
   });
 }

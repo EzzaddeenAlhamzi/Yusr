@@ -21,6 +21,7 @@ void main() {
   group('A/B caregiver profile + settings honesty', () {
     testWidgets('profile settings tab surfaces deferred biometric/help copy',
         (tester) async {
+      SharedPreferences.setMockInitialValues({});
       AuthService().setCaregiverSession(
         id: 901,
         name: 'مقدم تجريبي',
@@ -29,19 +30,28 @@ void main() {
         linkedElderlyId: null,
       );
 
+      // Wide surface avoids pre-existing tab-label overflow in profile chrome.
+      await tester.binding.setSurfaceSize(const Size(1200, 900));
+      addTearDown(() async {
+        await tester.binding.setSurfaceSize(null);
+      });
+
       await tester.pumpWidget(
         const MaterialApp(
-          home: ProfilePageCaregiver(showBottomNav: false),
+          home: Directionality(
+            textDirection: TextDirection.rtl,
+            child: ProfilePageCaregiver(showBottomNav: false),
+          ),
         ),
       );
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+      // Allow async profile/settings load without pumping forever on HTTP 400.
+      await tester.pump(const Duration(milliseconds: 100));
 
-      // Open settings tab
       expect(find.text('الإعدادات'), findsOneWidget);
       await tester.tap(find.text('الإعدادات'));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump(const Duration(milliseconds: 100));
 
       expect(
         find.textContaining('المصادقة الحيوية غير مفعّلة'),
@@ -49,6 +59,11 @@ void main() {
       );
       expect(find.text('مركز المساعدة والدعم الفني'), findsOneWidget);
       expect(find.text('سياسة الخصوصية والشروط'), findsOneWidget);
+
+      // Settings ListTiles/SwitchListTiles paint under Material (section cards).
+      expect(find.byType(ListTile), findsWidgets);
+      expect(find.byType(SwitchListTile), findsWidgets);
+      expect(tester.takeException(), isNull);
     });
 
     test('caregiver settings deferred actions keep honest snackbar copy', () {
@@ -59,6 +74,9 @@ void main() {
         src.contains('تم حفظ التفضيل محلياً. الدخول بالبصمة غير متاح حالياً.'),
         isTrue,
       );
+      // Section cards provide Material for ListTile/SwitchListTile/InkWell.
+      expect(src.contains('Material ancestor required for ListTile'), isTrue);
+      expect(RegExp(r'Widget _buildSectionCard\([\s\S]*?return Material\(').hasMatch(src), isTrue);
     });
 
     test('caregiver profile applies UI only after update_caregiver success', () {

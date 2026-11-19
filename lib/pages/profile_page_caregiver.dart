@@ -831,35 +831,34 @@ class _ProfilePageCaregiverState extends State<ProfilePageCaregiver> {
     required String title,
     required List<Widget> children,
   }) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: AppColors.cardColor,
+    // Material ancestor required for ListTile / SwitchListTile / InkWell ink.
+    return Material(
+      color: AppColors.cardColor,
+      elevation: 0,
+      shadowColor: Colors.black.withValues(alpha: 0.03),
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.cardBorderColor.withValues(alpha: 0.6)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 8,
-            offset: const Offset(0, 3),
-          ),
-        ],
+        side: BorderSide(
+          color: AppColors.cardBorderColor.withValues(alpha: 0.6),
+        ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: GoogleFonts.cairo(
-              fontSize: 15,
-              fontWeight: FontWeight.bold,
-              color: AppColors.mainColor,
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: GoogleFonts.cairo(
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+                color: AppColors.mainColor,
+              ),
             ),
-          ),
-          const SizedBox(height: 14),
-          ...children,
-        ],
+            const SizedBox(height: 14),
+            ...children,
+          ],
+        ),
       ),
     );
   }

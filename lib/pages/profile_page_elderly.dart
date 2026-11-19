@@ -598,7 +598,7 @@ class _ProfilePageElderlyState extends State<ProfilePageElderly> {
                   );
                   if (!ctx.mounted) return;
                   if (res['status'] != 'success') {
-                    ScaffoldMessenger.of(context).showSnackBar(
+                    ScaffoldMessenger.of(ctx).showSnackBar(
                       SnackBar(
                         content: Text(
                           res['message']?.toString() ??

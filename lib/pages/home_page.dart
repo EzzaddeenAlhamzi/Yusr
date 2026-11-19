@@ -712,7 +712,8 @@ class _TodayStatusCardState extends State<_TodayStatusCard> {
         setState(() {
           _loading = false;
           _headline = 'تعذّر جلب الحالة';
-          _subtitle = alertErr ?? logErr ?? 'تحقق من الاتصال بالخادم';
+          // Both errors are non-null in this branch (analyzer-promoted).
+          _subtitle = alertErr.isNotEmpty ? alertErr : logErr;
           _icon = Icons.cloud_off_outlined;
           _iconColor = Colors.orange.shade800;
         });

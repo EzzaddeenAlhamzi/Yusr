@@ -267,7 +267,7 @@ class _ProfilePageCaregiverState extends State<ProfilePageCaregiver> {
               final summary =
                   '$_caregiverName · $_caregiverPhone · $_caregiverEmail';
               await Clipboard.setData(ClipboardData(text: summary));
-              if (!mounted) return;
+              if (!context.mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text(

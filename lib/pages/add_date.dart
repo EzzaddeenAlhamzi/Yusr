@@ -654,7 +654,7 @@ class _AddDateScreenState extends State<AddDateScreen> {
                           note: '',
                           elderlyId: seniorId,
                         );
-                        if (!mounted) return;
+                        if (!context.mounted) return;
                         if (res['status'] != 'success') {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(

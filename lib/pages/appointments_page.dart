@@ -42,9 +42,22 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
       final int? seniorId = int.tryParse(senior.id);
       final list =
           await ApiService.instance.getAppointments(elderlyId: seniorId);
+      final listErr = ApiService.lastListError;
       final prefs = await SharedPreferences.getInstance();
 
       if (mounted) {
+        if (list.isEmpty && listErr != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                listErr,
+                style: GoogleFonts.cairo(),
+              ),
+              backgroundColor: Colors.red.shade700,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
         final now = DateTime.now();
         final loaded = <Map<String, dynamic>>[];
 
@@ -234,7 +247,7 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                'تم إرسال تذكير عاجل للمسن بموعد ($title) 🔔',
+                'إرسال تذكير عاجل لموعد ($title) غير متاح على الخادم حالياً (مؤجّل).',
                 style: GoogleFonts.cairo(fontWeight: FontWeight.bold),
               ),
             ),
@@ -1133,6 +1146,21 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                         elderlyId: seniorId,
                       );
 
+                      if (!context.mounted) return;
+                      if (res['status'] != 'success') {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              res['message']?.toString() ??
+                                  'تعذّر حفظ الموعد على الخادم',
+                              style: GoogleFonts.cairo(),
+                            ),
+                            backgroundColor: Colors.red.shade700,
+                          ),
+                        );
+                        return;
+                      }
+
                       final newId = res['data']?['Appointment_ID'] ??
                           res['Appointment_ID'];
                       if (newId != null) {
@@ -1372,44 +1400,20 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                             GoogleFonts.cairo(color: AppColors.textSecondary)),
                   ),
                   ElevatedButton(
-                    onPressed: () async {
+                    onPressed: () {
+                      // No appointment UPDATE route in Laravel API yet —
+                      // do not fake success via silent delete+recreate.
                       Navigator.pop(ctx);
-                      final appointmentId = item['id'];
-                      if (appointmentId != null) {
-                        await ApiService.instance.deleteAppointment(
-                          appointmentId is int
-                              ? appointmentId
-                              : int.parse(appointmentId.toString()),
-                        );
-                      }
-                      final senior = SeniorManager().currentSenior;
-                      final int? seniorId = int.tryParse(senior.id);
-                      final res = await ApiService.instance.addAppointment(
-                        date: dateController.text.trim().isEmpty
-                            ? DateTime.now()
-                                .toIso8601String()
-                                .split('T')
-                                .first
-                            : dateController.text.trim(),
-                        time: timeController.text.trim().isEmpty
-                            ? '09:00:00'
-                            : '${timeController.text.trim()}:00',
-                        dateType: selectedType,
-                        location: locationController.text.trim(),
-                        note: doctorController.text.trim(),
-                        elderlyId: seniorId,
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'تعديل الموعد على الخادم غير متاح حالياً. احذف الموعد وأضفه من جديد.',
+                            style: GoogleFonts.cairo(fontSize: 13),
+                          ),
+                          backgroundColor: Colors.orange.shade800,
+                          duration: const Duration(seconds: 4),
+                        ),
                       );
-
-                      final newId = res['data']?['Appointment_ID'] ??
-                          res['Appointment_ID'];
-                      if (newId != null) {
-                        final prefs = await SharedPreferences.getInstance();
-                        final remKey =
-                            'appt_advance_rem_${seniorId}_$newId';
-                        await prefs.setString(remKey, selectedAdvance);
-                      }
-
-                      await _loadAppointments();
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.mainColor,
@@ -1463,12 +1467,36 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
               onPressed: () async {
                 Navigator.pop(ctx);
                 final appointmentId = item['id'];
-                if (appointmentId != null) {
-                  await ApiService.instance.deleteAppointment(
-                    appointmentId is int
-                        ? appointmentId
-                        : int.parse(appointmentId.toString()),
+                if (appointmentId == null) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'تعذّر حذف الموعد: معرف غير صالح',
+                        style: GoogleFonts.cairo(),
+                      ),
+                      backgroundColor: Colors.red.shade700,
+                    ),
                   );
+                  return;
+                }
+                final res = await ApiService.instance.deleteAppointment(
+                  appointmentId is int
+                      ? appointmentId
+                      : int.parse(appointmentId.toString()),
+                );
+                if (!context.mounted) return;
+                if (res['status'] != 'success') {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        res['message']?.toString() ?? 'تعذّر حذف الموعد',
+                        style: GoogleFonts.cairo(),
+                      ),
+                      backgroundColor: Colors.red.shade700,
+                    ),
+                  );
+                  return;
                 }
                 await _loadAppointments();
               },

@@ -24,12 +24,14 @@ class _ProfilePageElderlyState extends State<ProfilePageElderly> {
   String _userName = 'كبير السن';
   String _userAge = 'غير محدد';
   String _bloodType = 'غير محدد';
+  String _userSex = 'غير محدد';
   String _phoneNumber = '';
   String _email = '';
   String _emergencyName = 'جهة الطوارئ';
   String _emergencyPhone = '997';
   String _caregiverName = 'مقدم الرعاية';
   String _caregiverPhone = '';
+  bool _loadFailed = false;
 
   @override
   void initState() {
@@ -47,9 +49,12 @@ class _ProfilePageElderlyState extends State<ProfilePageElderly> {
         final elderly = await ApiService.instance.getElderly(id);
         if (elderly != null && mounted) {
           setState(() {
+            _loadFailed = false;
             _userName = elderly['E_Name']?.toString() ?? _userName;
             _phoneNumber = elderly['E_PhonNumber']?.toString() ?? _phoneNumber;
             _email = elderly['E_Email']?.toString() ?? _email;
+            final sex = elderly['E_sex']?.toString().trim() ?? '';
+            if (sex.isNotEmpty) _userSex = sex;
             if (elderly['caregiver'] != null) {
               _caregiverName = elderly['caregiver']['C_Name']?.toString() ?? 'مقدم الرعاية';
               _caregiverPhone = elderly['caregiver']['C_PhonNumber']?.toString() ?? '';
@@ -58,35 +63,105 @@ class _ProfilePageElderlyState extends State<ProfilePageElderly> {
               _caregiverPhone = 'غير مسجل';
             }
           });
+        } else if (mounted && ApiService.lastListError != null) {
+          setState(() => _loadFailed = true);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                ApiService.lastListError!,
+                style: GoogleFonts.tajawal(),
+              ),
+              backgroundColor: Colors.red.shade700,
+            ),
+          );
         }
         final contacts = await ApiService.instance.getEmergencyContacts(elderlyId: id);
-        if (contacts.isNotEmpty && mounted) {
+        if (ApiService.lastListError != null && contacts.isEmpty && mounted) {
+          // Keep local emergency defaults; surface fetch failure once.
+          if (!_loadFailed) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'تعذّر جلب جهات اتصال الطوارئ من الخادم',
+                  style: GoogleFonts.tajawal(),
+                ),
+                backgroundColor: Colors.orange.shade800,
+              ),
+            );
+          }
+        } else if (contacts.isNotEmpty && mounted) {
           setState(() {
             _emergencyName = contacts.first['contact_Name']?.toString() ?? _emergencyName;
             _emergencyPhone = contacts.first['Phone_Number']?.toString() ?? _emergencyPhone;
           });
         }
       }
-    } catch (_) {}
-  }
-
-  Future<void> _persistElderlyData() async {
-    try {
-      final id = AuthService().userId;
-      if (id != null) {
-        await ApiService.instance.updateElderly(
-          elderlyId: id,
-          name: _userName,
-          sex: 'ذكر',
-          phone: _phoneNumber,
-        );
-        AuthService().setSeniorSession(
-          id: id,
-          name: _userName,
-          phone: _phoneNumber,
+    } catch (_) {
+      if (mounted) {
+        setState(() => _loadFailed = true);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'تعذّر تحميل الملف الشخصي من الخادم',
+              style: GoogleFonts.tajawal(),
+            ),
+            backgroundColor: Colors.red.shade700,
+          ),
         );
       }
-    } catch (_) {}
+    }
+  }
+
+  /// Persist elderly fields that exist in DB. Returns true only on API success.
+  Future<bool> _persistElderlyData() async {
+    try {
+      final id = AuthService().userId;
+      if (id == null) return false;
+      final sex = (_userSex == 'غير محدد' || _userSex.trim().isEmpty)
+          ? 'ذكر'
+          : _userSex;
+      final res = await ApiService.instance.updateElderly(
+        elderlyId: id,
+        name: _userName,
+        sex: sex,
+        phone: _phoneNumber,
+        email: _email,
+      );
+      if (res['status'] != 'success') {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                res['message']?.toString() ?? 'تعذّر حفظ بيانات كبير السن',
+                style: GoogleFonts.tajawal(),
+              ),
+              backgroundColor: Colors.red.shade700,
+            ),
+          );
+        }
+        return false;
+      }
+      AuthService().setSeniorSession(
+        id: id,
+        name: _userName,
+        phone: _phoneNumber,
+        email: _email,
+      );
+      return true;
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'تعذّر الاتصال بالخادم أثناء الحفظ',
+              style: GoogleFonts.tajawal(),
+            ),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+      return false;
+    }
   }
 
   // دالة إجراء مكالمة هاتفية سريعة
@@ -230,14 +305,16 @@ class _ProfilePageElderlyState extends State<ProfilePageElderly> {
                   ),
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                 ),
-                onPressed: () {
+                onPressed: () async {
                   final text = controller.text.trim();
-                  if (text.isNotEmpty) {
-                    setState(() {
-                      onSave(text);
-                    });
-                    _persistElderlyData();
-                    Navigator.pop(ctx);
+                  if (text.isEmpty) return;
+                  setState(() {
+                    onSave(text);
+                  });
+                  final ok = await _persistElderlyData();
+                  if (!ctx.mounted) return;
+                  Navigator.pop(ctx);
+                  if (ok) {
                     _showSavedSnackBar('تم حفظ التعديل بنجاح');
                   }
                 },
@@ -319,7 +396,10 @@ class _ProfilePageElderlyState extends State<ProfilePageElderly> {
                           _bloodType = type;
                         });
                         Navigator.pop(ctx);
-                        _showSavedSnackBar('تم تحديث فصيلة الدم إلى $type');
+                        // No blood-type column in elderly table yet — local UI only.
+                        _showSavedSnackBar(
+                          'تم حفظ فصيلة الدم محلياً فقط ($type) — غير مزامنة مع الخادم بعد',
+                        );
                       },
                       borderRadius: BorderRadius.circular(12),
                       child: Container(
@@ -504,17 +584,38 @@ class _ProfilePageElderlyState extends State<ProfilePageElderly> {
                   ),
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                 ),
-                onPressed: () {
+                onPressed: () async {
                   final name = nameController.text.trim();
                   final phone = phoneController.text.trim();
-                  if (name.isNotEmpty && phone.isNotEmpty) {
-                    setState(() {
-                      _emergencyName = name;
-                      _emergencyPhone = phone;
-                    });
-                    Navigator.pop(ctx);
-                    _showSavedSnackBar('تم تحديث جهة اتصال الطوارئ بنجاح');
+                  if (name.isEmpty || phone.isEmpty) return;
+                  final id = AuthService().userId;
+                  if (id == null) return;
+                  final res = await ApiService.instance.addEmergencyContact(
+                    name: name,
+                    phone: phone,
+                    relationship: 'طوارئ',
+                    elderlyId: id,
+                  );
+                  if (!ctx.mounted) return;
+                  if (res['status'] != 'success') {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          res['message']?.toString() ??
+                              'تعذّر حفظ جهة اتصال الطوارئ',
+                          style: GoogleFonts.tajawal(),
+                        ),
+                        backgroundColor: Colors.red.shade700,
+                      ),
+                    );
+                    return;
                   }
+                  setState(() {
+                    _emergencyName = name;
+                    _emergencyPhone = phone;
+                  });
+                  Navigator.pop(ctx);
+                  _showSavedSnackBar('تم تحديث جهة اتصال الطوارئ بنجاح');
                 },
                 child: Text(
                   'حفظ',
@@ -715,19 +816,21 @@ class _ProfilePageElderlyState extends State<ProfilePageElderly> {
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                 ),
                 onPressed: () {
-                  final name = nameController.text.trim();
-                  final phone = phoneController.text.trim();
-                  if (name.isNotEmpty && phone.isNotEmpty) {
-                    setState(() {
-                      _caregiverName = name;
-                      _caregiverPhone = phone;
-                    });
-                    Navigator.pop(ctx);
-                    _showSavedSnackBar('تم تحديث بيانات مقدم الرعاية بنجاح');
-                  }
+                  // Caregiver profile is owned by the caregiver account — display only.
+                  Navigator.pop(ctx);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'بيانات مقدم الرعاية للعرض فقط. تعديلها يتم من حساب مقدم الرعاية المرتبط.',
+                        style: GoogleFonts.tajawal(),
+                      ),
+                      backgroundColor: Colors.orange.shade800,
+                      duration: const Duration(seconds: 4),
+                    ),
+                  );
                 },
                 child: Text(
-                  'حفظ',
+                  'حسناً',
                   style: GoogleFonts.tajawal(
                     color: Colors.white,
                     fontSize: 17,
@@ -835,19 +938,59 @@ class _ProfilePageElderlyState extends State<ProfilePageElderly> {
                               ),
                               elevation: 2,
                             ),
-                            onPressed: () {
+                            onPressed: () async {
+                              final newName = nameCtrl.text.trim();
+                              final newPhone = phoneCtrl.text.trim();
+                              final newAge = ageCtrl.text.trim();
+                              final newBlood = bloodCtrl.text.trim();
+                              final newEmName = emNameCtrl.text.trim();
+                              final newEmPhone = emPhoneCtrl.text.trim();
+                              // Age/blood have no DB columns yet — local UI only (deferred schema).
                               setState(() {
-                                if (nameCtrl.text.trim().isNotEmpty) _userName = nameCtrl.text.trim();
-                                if (ageCtrl.text.trim().isNotEmpty) _userAge = ageCtrl.text.trim();
-                                if (bloodCtrl.text.trim().isNotEmpty) _bloodType = bloodCtrl.text.trim();
-                                if (phoneCtrl.text.trim().isNotEmpty) _phoneNumber = phoneCtrl.text.trim();
-                                if (emNameCtrl.text.trim().isNotEmpty) _emergencyName = emNameCtrl.text.trim();
-                                if (emPhoneCtrl.text.trim().isNotEmpty) _emergencyPhone = emPhoneCtrl.text.trim();
-                                if (cgNameCtrl.text.trim().isNotEmpty) _caregiverName = cgNameCtrl.text.trim();
-                                if (cgPhoneCtrl.text.trim().isNotEmpty) _caregiverPhone = cgPhoneCtrl.text.trim();
+                                if (newName.isNotEmpty) _userName = newName;
+                                if (newAge.isNotEmpty) _userAge = newAge;
+                                if (newBlood.isNotEmpty) _bloodType = newBlood;
+                                if (newPhone.isNotEmpty) _phoneNumber = newPhone;
                               });
+                              final ok = await _persistElderlyData();
+                              if (!ok) {
+                                if (!ctx.mounted) return;
+                                return;
+                              }
+                              final id = AuthService().userId;
+                              if (id != null &&
+                                  newEmName.isNotEmpty &&
+                                  newEmPhone.isNotEmpty) {
+                                final contactRes =
+                                    await ApiService.instance.addEmergencyContact(
+                                  name: newEmName,
+                                  phone: newEmPhone,
+                                  relationship: 'طوارئ',
+                                  elderlyId: id,
+                                );
+                                if (contactRes['status'] == 'success' && mounted) {
+                                  setState(() {
+                                    _emergencyName = newEmName;
+                                    _emergencyPhone = newEmPhone;
+                                  });
+                                } else if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        'حُفظ الملف الشخصي، لكن تعذّر حفظ جهة الطوارئ على الخادم',
+                                        style: GoogleFonts.tajawal(),
+                                      ),
+                                      backgroundColor: Colors.orange.shade800,
+                                    ),
+                                  );
+                                }
+                              }
+                              // Caregiver fields are display-only — do not pretend local edit saved.
+                              if (!ctx.mounted) return;
                               Navigator.pop(ctx);
-                              _showSavedSnackBar('تم حفظ كافة البيانات بنجاح');
+                              _showSavedSnackBar(
+                                'تم حفظ بيانات الحساب على الخادم (العمر/فصيلة الدم محلية فقط — لا عمود في قاعدة البيانات بعد)',
+                              );
                             },
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.center,

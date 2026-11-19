@@ -304,14 +304,20 @@ class _LoginPageState extends State<LoginPage> {
                               );
                               if (context.mounted) {
                                 Navigator.pop(ctx);
+                                final ok = res['status'] == 'success';
+                                final msg = res['message']?.toString() ??
+                                    (ok
+                                        ? 'تم استلام طلب استعادة كلمة المرور'
+                                        : 'تعذّر إتمام طلب استعادة كلمة المرور');
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
                                     content: Text(
-                                      res['message'] ??
-                                          'تم استلام طلبك وسيتم التواصل معك عبر البريد الإلكتروني',
+                                      msg,
                                       style: GoogleFonts.cairo(),
                                     ),
-                                    backgroundColor: AppColors.mainColor,
+                                    backgroundColor: ok
+                                        ? AppColors.mainColor
+                                        : Colors.red.shade700,
                                     duration: const Duration(seconds: 4),
                                   ),
                                 );

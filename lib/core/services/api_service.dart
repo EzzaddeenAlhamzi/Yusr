@@ -21,6 +21,35 @@ class ApiService {
 
   static bool _hooksWired = false;
 
+  /// Last list/get helper failure message (null when last helper succeeded).
+  /// Callers must not treat an empty list as success when this is set.
+  static String? lastListError;
+
+  /// True when [lastListError] came from a connection/timeout failure.
+  static bool lastListConnectionError = false;
+
+  static void _clearListError() {
+    lastListError = null;
+    lastListConnectionError = false;
+  }
+
+  static void _setListErrorFrom(Map<String, dynamic> res) {
+    lastListError = res['message']?.toString() ??
+        'تعذّر جلب البيانات من الخادم';
+    lastListConnectionError = res['is_connection_error'] == true ||
+        res['error_type'] == 'connection_error';
+  }
+
+  /// Parse a list payload honestly: success+list → data; otherwise record error.
+  static List<Map<String, dynamic>> listDataOrEmpty(Map<String, dynamic> res) {
+    if (res['status'] == 'success' && res['data'] is List) {
+      _clearListError();
+      return List<Map<String, dynamic>>.from(res['data'] as List);
+    }
+    _setListErrorFrom(res);
+    return [];
+  }
+
   /// Wire logout revoke + /me hooks once (avoids AuthService ↔ ApiService cycles).
   void _ensureAuthHooks() {
     if (_hooksWired) return;
@@ -443,8 +472,10 @@ class ApiService {
       'Caregivers_ID': id,
     });
     if (res['status'] == 'success' && res['data'] != null) {
+      _clearListError();
       return Map<String, dynamic>.from(res['data']);
     }
+    _setListErrorFrom(res);
     return null;
   }
 
@@ -562,18 +593,25 @@ class ApiService {
   /// جلب قائمة كبار السن المسجلين في قاعدة البيانات
   Future<List<Map<String, dynamic>>> getElderlyList() async {
     final res = await _sendRequest({'action': 'get_elderly'});
-    if (res['status'] == 'success' && res['data'] is List) {
-      return List<Map<String, dynamic>>.from(res['data']);
-    }
-    return [];
+    return listDataOrEmpty(res);
   }
 
   /// جلب بيانات كبير سن محدد بالمعرف
   Future<Map<String, dynamic>?> getElderly(int id) async {
     final res = await _sendRequest({'action': 'get_elderly', 'Eldery_ID': id});
     if (res['status'] == 'success' && res['data'] != null) {
-      return Map<String, dynamic>.from(res['data']);
+      _clearListError();
+      // Single-object success (not a list dump).
+      if (res['data'] is Map) {
+        return Map<String, dynamic>.from(res['data'] as Map);
+      }
+      // Accessible-list shape without id filter — unexpected for get-by-id.
+      if (res['data'] is List && (res['data'] as List).isNotEmpty) {
+        final first = (res['data'] as List).first;
+        if (first is Map) return Map<String, dynamic>.from(first);
+      }
     }
+    _setListErrorFrom(res);
     return null;
   }
 
@@ -583,14 +621,19 @@ class ApiService {
     required String name,
     required String sex,
     required String phone,
+    String? email,
   }) async {
-    return _sendRequest({
+    final body = <String, dynamic>{
       'action': 'update_elderly',
       'Eldery_ID': elderlyId,
       'E_Name': name,
       'E_sex': sex,
       'E_PhonNumber': phone,
-    });
+    };
+    if (email != null) {
+      body['E_Email'] = email;
+    }
+    return _sendRequest(body);
   }
 
   /// إنشاء رمز ربط مؤقت (كبير السن فقط — 6 أرقام، 10 دقائق)
@@ -630,10 +673,7 @@ class ApiService {
     final body = <String, dynamic>{'action': 'get_medications'};
     if (elderlyId != null) body['Elderly_ID'] = elderlyId;
     final res = await _sendRequest(body);
-    if (res['status'] == 'success' && res['data'] is List) {
-      return List<Map<String, dynamic>>.from(res['data']);
-    }
-    return [];
+    return listDataOrEmpty(res);
   }
 
   /// إضافة دواء إلى قاعدة البيانات
@@ -683,10 +723,7 @@ class ApiService {
     final body = <String, dynamic>{'action': 'get_appointments'};
     if (elderlyId != null) body['Elderly_ID'] = elderlyId;
     final res = await _sendRequest(body);
-    if (res['status'] == 'success' && res['data'] is List) {
-      return List<Map<String, dynamic>>.from(res['data']);
-    }
-    return [];
+    return listDataOrEmpty(res);
   }
 
   /// إضافة موعد جديد إلى قاعدة البيانات
@@ -726,10 +763,7 @@ class ApiService {
     final body = <String, dynamic>{'action': 'get_emergency_contacts'};
     if (elderlyId != null) body['Eldery_ID'] = elderlyId;
     final res = await _sendRequest(body);
-    if (res['status'] == 'success' && res['data'] is List) {
-      return List<Map<String, dynamic>>.from(res['data']);
-    }
-    return [];
+    return listDataOrEmpty(res);
   }
 
   /// إضافة جهة اتصال طوارئ
@@ -765,10 +799,7 @@ class ApiService {
     final body = <String, dynamic>{'action': 'get_devices'};
     if (elderlyId != null) body['Elderly_ID'] = elderlyId;
     final res = await _sendRequest(body);
-    if (res['status'] == 'success' && res['data'] is List) {
-      return List<Map<String, dynamic>>.from(res['data']);
-    }
-    return [];
+    return listDataOrEmpty(res);
   }
 
   /// إضافة جهاز إلى جدول devices
@@ -811,10 +842,7 @@ class ApiService {
     final body = <String, dynamic>{'action': 'get_health_monitoring'};
     if (elderlyId != null) body['Elderly_ID'] = elderlyId;
     final res = await _sendRequest(body);
-    if (res['status'] == 'success' && res['data'] is List) {
-      return List<Map<String, dynamic>>.from(res['data']);
-    }
-    return [];
+    return listDataOrEmpty(res);
   }
 
   /// إضافة سجل مؤشرات حيوية جديد
@@ -878,10 +906,7 @@ class ApiService {
     if (elderlyId != null) body['Eldery_ID'] = elderlyId;
     if (caregiverId != null) body['Caregiver_ID'] = caregiverId;
     final res = await _sendRequest(body);
-    if (res['status'] == 'success' && res['data'] is List) {
-      return List<Map<String, dynamic>>.from(res['data']);
-    }
-    return [];
+    return listDataOrEmpty(res);
   }
 
   /// إضافة تنبيه جديد إلى قاعدة البيانات
@@ -908,10 +933,7 @@ class ApiService {
     final body = <String, dynamic>{'action': 'get_emergency_log'};
     if (elderlyId != null) body['Elderly_ID'] = elderlyId;
     final res = await _sendRequest(body);
-    if (res['status'] == 'success' && res['data'] is List) {
-      return List<Map<String, dynamic>>.from(res['data']);
-    }
-    return [];
+    return listDataOrEmpty(res);
   }
 
   /// الاسم البديل لجلب سجلات الطوارئ
@@ -970,10 +992,7 @@ class ApiService {
     if (elderlyId != null) body['Eldery_ID'] = elderlyId;
     if (caregiverId != null) body['Caregivers_ID'] = caregiverId;
     final res = await _sendRequest(body);
-    if (res['status'] == 'success' && res['data'] is List) {
-      return List<Map<String, dynamic>>.from(res['data']);
-    }
-    return [];
+    return listDataOrEmpty(res);
   }
 
   /// إضافة نوع رعاية جديد
@@ -999,10 +1018,7 @@ class ApiService {
     final body = <String, dynamic>{'action': 'get_location_history'};
     if (elderlyId != null) body['Elderly_ID'] = elderlyId;
     final res = await _sendRequest(body);
-    if (res['status'] == 'success' && res['data'] is List) {
-      return List<Map<String, dynamic>>.from(res['data']);
-    }
-    return [];
+    return listDataOrEmpty(res);
   }
 
   // ==================== الخدمات وطلبات الخدمات (services & services_request) ====================
@@ -1010,10 +1026,7 @@ class ApiService {
   /// جلب قائمة الخدمات المتاحة
   Future<List<Map<String, dynamic>>> getServices() async {
     final res = await _sendRequest({'action': 'get_services'});
-    if (res['status'] == 'success' && res['data'] is List) {
-      return List<Map<String, dynamic>>.from(res['data']);
-    }
-    return [];
+    return listDataOrEmpty(res);
   }
 
   /// تقديم طلب خدمة جديدة
@@ -1041,10 +1054,7 @@ class ApiService {
     if (caregiverId != null) body['Caregivers_id'] = caregiverId;
     if (elderlyId != null) body['Elderly_ID'] = elderlyId;
     final res = await _sendRequest(body);
-    if (res['status'] == 'success' && res['data'] is List) {
-      return List<Map<String, dynamic>>.from(res['data']);
-    }
-    return [];
+    return listDataOrEmpty(res);
   }
 
   // ==================== التنبيهات الصحية (health_alerts) ====================
@@ -1054,10 +1064,7 @@ class ApiService {
     final body = <String, dynamic>{'action': 'get_health_alerts'};
     if (elderlyId != null) body['Elderly_ID'] = elderlyId;
     final res = await _sendRequest(body);
-    if (res['status'] == 'success' && res['data'] is List) {
-      return List<Map<String, dynamic>>.from(res['data']);
-    }
-    return [];
+    return listDataOrEmpty(res);
   }
 
   /// تسجيل تنبيه صحي جديد

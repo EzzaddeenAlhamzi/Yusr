@@ -503,13 +503,17 @@ class _MainCaregiverPageState extends State<MainCaregiverPage> {
                     else
                       const SizedBox.shrink(),
 
-                    // حاوية الساعة الذكية: تختفي نهائياً إذا لم تكن هناك ساعة مرتبطة
-                    if (senior.watchConnected && senior.watchModel.isNotEmpty && senior.watchModel != 'غير مقترنة')
+                    // Device linked from API — show model only (battery % not in DB).
+                    if (senior.watchConnected &&
+                        senior.watchModel.isNotEmpty &&
+                        senior.watchModel != 'غير مقترنة')
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            '${senior.watchBattery}% شحن',
+                            senior.watchBattery > 0
+                                ? '${senior.watchBattery}% · ${senior.watchModel}'
+                                : senior.watchModel,
                             style: GoogleFonts.cairo(
                               color: AppColors.mainColor,
                               fontWeight: FontWeight.bold,
@@ -517,7 +521,7 @@ class _MainCaregiverPageState extends State<MainCaregiverPage> {
                             ),
                           ),
                           const SizedBox(width: 4),
-                          const Text('⌚', style: TextStyle(fontSize: 13)),
+                          const Icon(Icons.watch, size: 14, color: AppColors.mainColor),
                         ],
                       )
                     else

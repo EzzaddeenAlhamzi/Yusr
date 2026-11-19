@@ -465,9 +465,12 @@ class AuthController extends Controller
             ], 200);
         }
 
+        // Lab stub: do not claim an email was delivered (no mailer in P1.4).
+        // Keep success for known emails so client/enumeration contract stays stable.
         return response()->json([
             'status' => 'success',
-            'message' => 'تم إرسال رابط استعادة كلمة المرور إلى بريدك الإلكتروني بنجاح',
+            'reset_email_sent' => false,
+            'message' => 'تم استلام طلب استعادة كلمة المرور. إرسال رابط البريد غير مفعّل حالياً في المختبر.',
         ]);
     }
 

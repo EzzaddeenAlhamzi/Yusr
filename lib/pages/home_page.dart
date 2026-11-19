@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 // استدعاء ملفات الـ shard بناءً على هيكلية المشروع
 import '../shard/color.dart';
 import '../core/widgets/elderly_bottom_nav_bar.dart';
+import '../core/services/api_service.dart';
 import '../core/services/auth_service.dart';
 import 'ai_page.dart';
 import 'dates.dart';
@@ -16,11 +17,34 @@ import 'return_home_page.dart';
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
-  // دالة عرض نافذة الإشعارات
-  void _showNotificationsDialog(BuildContext context) {
-    // قائمة الإشعارات (فارغة حالياً حسب المطلوب)
-    final List<Map<String, dynamic>> notifications = [];
+  /// Load notifications from API — never invent placeholder rows.
+  Future<void> _showNotificationsDialog(BuildContext context) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const Center(
+        child: CircularProgressIndicator(color: appbarColor),
+      ),
+    );
 
+    List<Map<String, dynamic>> notifications = [];
+    String? fetchError;
+    try {
+      final id = AuthService().userId;
+      notifications = await ApiService.instance.getNotifications(
+        elderlyId: id,
+      );
+      if (notifications.isEmpty && ApiService.lastListError != null) {
+        fetchError = ApiService.lastListError;
+      }
+    } catch (_) {
+      fetchError = 'تعذّر جلب الإشعارات من الخادم';
+    }
+
+    if (!context.mounted) return;
+    Navigator.of(context, rootNavigator: true).pop(); // loading
+
+    if (!context.mounted) return;
     showDialog(
       context: context,
       builder: (ctx) => Dialog(
@@ -59,7 +83,29 @@ class HomePage extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 16),
-              if (notifications.isEmpty) ...[
+              if (fetchError != null) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 22,
+                  ),
+                  decoration: BoxDecoration(
+                    color: backgroundColor,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: cardBorderColor, width: 1),
+                  ),
+                  child: Text(
+                    fetchError,
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.tajawal(
+                      color: Colors.red.shade800,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ] else if (notifications.isEmpty) ...[
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(
@@ -109,6 +155,11 @@ class HomePage extends StatelessWidget {
                     separatorBuilder: (_, __) => const SizedBox(height: 10),
                     itemBuilder: (context, index) {
                       final notif = notifications[index];
+                      final text = (notif['N_Title'] ??
+                              notif['N_Message'] ??
+                              notif['text'] ??
+                              '')
+                          .toString();
                       return Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 14,
@@ -129,7 +180,7 @@ class HomePage extends StatelessWidget {
                             const SizedBox(width: 10),
                             Expanded(
                               child: Text(
-                                notif['text'] ?? '',
+                                text,
                                 style: GoogleFonts.tajawal(
                                   fontSize: 17,
                                   fontWeight: FontWeight.w600,

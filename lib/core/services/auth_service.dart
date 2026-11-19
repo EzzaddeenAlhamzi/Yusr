@@ -171,7 +171,9 @@ class AuthService extends ChangeNotifier {
             (key.startsWith('senior_mode_') ||
                 key.startsWith('senior_setup_done_') ||
                 key.startsWith('senior_location_allowed_') ||
-                key.startsWith('senior_notifications_allowed_'))) {
+                key.startsWith('senior_notifications_allowed_') ||
+                key.startsWith('cg_notif_enabled_') ||
+                key.startsWith('cg_biometric_pref_'))) {
           await prefs.remove(key);
         }
       }

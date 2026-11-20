@@ -5,6 +5,7 @@ import '../core/constants/app_colors.dart';
 import '../core/widgets/custom_app_bar.dart';
 import '../core/widgets/senior_selector_widget.dart';
 import '../core/services/api_service.dart';
+import '../core/services/medication_adherence_helper.dart';
 import '../core/services/senior_manager.dart';
 
 class MedicinesPage extends StatefulWidget {
@@ -15,9 +16,11 @@ class MedicinesPage extends StatefulWidget {
 }
 
 class _MedicinesPageState extends State<MedicinesPage> {
-  String _selectedFilter = 'الكل'; // 'الكل', 'الفائتة وغير المؤكدة', 'تم تأكيدها'
+  String _selectedFilter = 'الكل'; // 'الكل', 'غير المؤكدة', 'تم تأكيدها'
   List<Map<String, dynamic>> _medicines = [];
   bool _isLoading = false;
+  bool _adherenceFromCache = false;
+  String? _adherenceError;
 
   @override
   void initState() {
@@ -34,13 +37,12 @@ class _MedicinesPageState extends State<MedicinesPage> {
 
   void _onSeniorChanged() => _loadMedicinesFromDb();
 
-  String _todayKey() {
-    final now = DateTime.now();
-    return '${now.year}-${now.month}-${now.day}';
-  }
-
   Future<void> _loadMedicinesFromDb() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _adherenceFromCache = false;
+      _adherenceError = null;
+    });
     try {
       final senior = SeniorManager().currentSenior;
       final int? seniorId = int.tryParse(senior.id);
@@ -59,41 +61,70 @@ class _MedicinesPageState extends State<MedicinesPage> {
           ),
         );
       }
+
+      // Server SoT for adherence (P2.2 B1). Prefs are NOT authoritative.
+      final civil = MedicationAdherenceHelper.civilDateToday();
+      final doseRes = await ApiService.instance.getTodayMedicationDoses(
+        elderlyId: seniorId,
+        civilDate: civil,
+      );
+      final Map<dynamic, Map<String, dynamic>> doseByMed = {};
+      bool dosesOk = doseRes['status'] == 'success' && doseRes['data'] is List;
+      if (dosesOk) {
+        for (final raw in (doseRes['data'] as List)) {
+          if (raw is Map) {
+            final row = Map<String, dynamic>.from(raw);
+            doseByMed[row['Medicayion_ID']] = row;
+          }
+        }
+      } else {
+        _adherenceError = doseRes['message']?.toString() ??
+            'تعذّر جلب حالة الالتزام من الخادم';
+        _adherenceFromCache = doseRes['is_connection_error'] == true ||
+            doseRes['error_type'] == 'connection_error';
+      }
+
       final prefs = await SharedPreferences.getInstance();
-      final today = _todayKey();
       final now = DateTime.now();
 
       if (mounted) {
         setState(() {
           _medicines = list.map((m) {
             final medId = m['Medicayion_ID'];
-            final confKey = 'med_confirmed_${seniorId}_${medId}_$today';
-            final timeKey = 'med_conf_time_${seniorId}_${medId}_$today';
             final remKey = 'med_reminder_active_${seniorId}_$medId';
             final startKey = 'med_start_date_${seniorId}_$medId';
             final endKey = 'med_end_date_${seniorId}_$medId';
 
-            final isConfirmed = prefs.getBool(confKey) ?? false;
-            final confTime = prefs.getString(timeKey) ?? '';
             final isReminderActive = prefs.getBool(remKey) ?? true;
             final startDate = prefs.getString(startKey) ??
                 '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
             final endDate = prefs.getString(endKey) ?? '';
 
-            // التحقق من انتهاء كورس الدواء
             bool isExpired = false;
             if (endDate.isNotEmpty) {
               final endDt = DateTime.tryParse(endDate);
-              if (endDt != null && now.isAfter(endDt.add(const Duration(days: 1)))) {
+              if (endDt != null &&
+                  now.isAfter(endDt.add(const Duration(days: 1)))) {
                 isExpired = true;
               }
             }
 
             final rep = (m['M_RepatTime'] ?? '').toString();
             final dose = (m['M_much'] ?? '1 حبة').toString();
-            final scheduledTime = _extractTime(rep);
-            final isMissed =
-                !isConfirmed && !isExpired && _checkIfMissed(scheduledTime);
+            final serverDose = doseByMed[medId];
+            final displayState = serverDose?['display_state']?.toString();
+            final isConfirmed =
+                MedicationAdherenceHelper.isConfirmedState(displayState);
+            final isOverdue = MedicationAdherenceHelper.isOverdueNotConfirmed(
+              displayState,
+            );
+            final confTime = serverDose?['confirmed_at']?.toString() ?? '';
+            final labelAr = serverDose != null
+                ? (serverDose['display_label_ar']?.toString() ??
+                    MedicationAdherenceHelper.displayLabelAr(displayState))
+                : (dosesOk ? 'غير مؤكد' : 'حالة غير متاحة دون اتصال');
+            final scheduledTime = serverDose?['scheduled_time']?.toString() ??
+                _extractTime(rep);
 
             return {
               'id': medId,
@@ -108,12 +139,17 @@ class _MedicinesPageState extends State<MedicinesPage> {
               'icon': Icons.medication_rounded,
               'iconColor': isConfirmed
                   ? const Color(0xFF2E7D32)
-                  : (isMissed
+                  : (isOverdue
                       ? const Color(0xFFE53935)
                       : const Color(0xFF00ACC1)),
               'isConfirmed': isConfirmed,
               'confirmedTime': confTime,
-              'isMissed': isMissed,
+              'isMissed': isOverdue, // UI flag only — means overdue_not_confirmed
+              'displayState': displayState,
+              'displayLabelAr': labelAr,
+              'occurrenceKey': serverDose?['occurrence_key'],
+              'lastConfirmedAt': confTime,
+              'serverBacked': dosesOk,
             };
           }).toList();
         });
@@ -146,80 +182,19 @@ class _MedicinesPageState extends State<MedicinesPage> {
     return '08:00 صباحاً';
   }
 
-  bool _checkIfMissed(String timeStr) {
-    final now = DateTime.now();
-    int targetHour = 8;
-    int targetMinute = 0;
-
-    if (timeStr.contains('ظهراً') || timeStr.contains('ظهر')) {
-      targetHour = 13;
-      targetMinute = 30;
-    } else if (timeStr.contains('مساءً') || timeStr.contains('مساء')) {
-      targetHour = 20;
-      targetMinute = 30;
-    } else if (timeStr.contains('صباحاً') || timeStr.contains('صباح')) {
-      targetHour = 8;
-      targetMinute = 0;
-    }
-
-    final targetDt =
-        DateTime(now.year, now.month, now.day, targetHour, targetMinute);
-    return now.isAfter(targetDt.add(const Duration(minutes: 30)));
-  }
-
-  Future<void> _toggleConfirm(int index) async {
-    final med = _medicines[index];
-    final medId = med['id'];
-    final bool currentStatus = med['isConfirmed'] ?? false;
-    final bool newStatus = !currentStatus;
-
-    final senior = SeniorManager().currentSenior;
-    final int? seniorId = int.tryParse(senior.id);
-    final prefs = await SharedPreferences.getInstance();
-    final today = _todayKey();
-
-    final confKey = 'med_confirmed_${seniorId}_${medId}_$today';
-    final timeKey = 'med_conf_time_${seniorId}_${medId}_$today';
-
-    final now = DateTime.now();
-    final formattedTime =
-        '${now.hour > 12 ? now.hour - 12 : (now.hour == 0 ? 12 : now.hour)}:${now.minute.toString().padLeft(2, '0')} ${now.hour >= 12 ? 'م' : 'ص'}';
-
-    await prefs.setBool(confKey, newStatus);
-    if (newStatus) {
-      await prefs.setString(timeKey, formattedTime);
-    } else {
-      await prefs.remove(timeKey);
-    }
-
-    if (mounted) {
-      setState(() {
-        _medicines[index]['isConfirmed'] = newStatus;
-        _medicines[index]['confirmedTime'] = newStatus ? formattedTime : '';
-        _medicines[index]['isMissed'] = !newStatus &&
-            !(_medicines[index]['isExpired'] ?? false) &&
-            _checkIfMissed(_medicines[index]['time']);
-        _medicines[index]['iconColor'] = newStatus
-            ? const Color(0xFF2E7D32)
-            : (_medicines[index]['isMissed']
-                ? const Color(0xFFE53935)
-                : const Color(0xFF00ACC1));
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            newStatus
-                ? 'تم تسجيل تأكيد تناول الدواء بنجاح ✅'
-                : 'تم إلغاء تأكيد تناول الدواء',
-            style: GoogleFonts.cairo(fontWeight: FontWeight.bold),
-          ),
-          backgroundColor:
-              newStatus ? const Color(0xFF2E7D32) : AppColors.mainColor,
-          duration: const Duration(seconds: 2),
+  /// Caregiver is READ-ONLY for adherence (P2.2). Never write SP as SoT.
+  Future<void> _showCaregiverReadOnlyNotice() async {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          MedicationAdherenceHelper.caregiverReadOnlyMessage(),
+          style: GoogleFonts.cairo(fontWeight: FontWeight.bold),
         ),
-      );
-    }
+        backgroundColor: AppColors.mainColor,
+        duration: const Duration(seconds: 3),
+      ),
+    );
   }
 
   Future<void> _toggleReminder(int index) async {
@@ -280,7 +255,7 @@ class _MedicinesPageState extends State<MedicinesPage> {
   List<Map<String, dynamic>> get _filteredMedicines {
     if (_selectedFilter == 'تم تأكيدها') {
       return _medicines.where((m) => m['isConfirmed'] == true).toList();
-    } else if (_selectedFilter == 'الفائتة وغير المؤكدة') {
+    } else if (_selectedFilter == 'غير المؤكدة') {
       return _medicines.where((m) => m['isConfirmed'] != true).toList();
     }
     return _medicines;
@@ -334,13 +309,39 @@ class _MedicinesPageState extends State<MedicinesPage> {
                     _buildAdherenceProgressCard(),
                     const SizedBox(height: 14),
 
-                    // 2. تنبيه الجرعات الفائتة
+                    if (_adherenceFromCache || _adherenceError != null) ...[
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        margin: const EdgeInsets.only(bottom: 12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF8E1),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: const Color(0xFFF9A825)),
+                        ),
+                        child: Text(
+                          _adherenceFromCache
+                              ? MedicationAdherenceHelper.outdatedCacheBanner()
+                              : (_adherenceError ??
+                                  MedicationAdherenceHelper
+                                      .outdatedCacheBanner()),
+                          style: GoogleFonts.cairo(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: const Color(0xFFF57F17),
+                          ),
+                          textAlign: TextAlign.right,
+                        ),
+                      ),
+                    ],
+
+                    // 2. تنبيه الجرعات المتأخرة غير المؤكدة (ليس دليلاً طبياً)
                     if (_missedCount > 0) ...[
                       _buildMissedAlertBanner(),
                       const SizedBox(height: 14),
                     ],
 
-                    // 3. أزرار الفلترة السريعة (الكل / الفائتة / المؤكدة)
+                    // 3. أزرار الفلترة السريعة (الكل / غير المؤكدة / المؤكدة)
                     _buildFilterTabs(),
                     const SizedBox(height: 16),
 
@@ -518,7 +519,7 @@ class _MedicinesPageState extends State<MedicinesPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'تنبيه: يوجد $_missedCount جرعة فائتة لم يؤكد المسن تناولها!',
+                  'تنبيه: يوجد $_missedCount جرعة متأخرة وغير مؤكدة من الخادم (ليست دليلاً طبياً على عدم التناول).',
                   style: GoogleFonts.cairo(
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
@@ -546,7 +547,7 @@ class _MedicinesPageState extends State<MedicinesPage> {
       children: [
         _buildFilterChip('الكل'),
         const SizedBox(width: 8),
-        _buildFilterChip('الفائتة وغير المؤكدة'),
+        _buildFilterChip('غير المؤكدة'),
         const SizedBox(width: 8),
         _buildFilterChip('تم تأكيدها'),
       ],
@@ -593,9 +594,11 @@ class _MedicinesPageState extends State<MedicinesPage> {
     final String startDate = med['startDate'] ?? '';
     final String endDate = med['endDate'] ?? '';
 
+    final String displayLabel =
+        (med['displayLabelAr'] ?? 'في انتظار تأكيد المسن').toString();
     Color badgeBg = const Color(0xFFFFF3E0);
     Color badgeColor = const Color(0xFFE65100);
-    String badgeText = 'في انتظار تأكيد المسن';
+    String badgeText = displayLabel;
     IconData badgeIcon = Icons.hourglass_top_rounded;
 
     if (isExpired) {
@@ -606,15 +609,23 @@ class _MedicinesPageState extends State<MedicinesPage> {
     } else if (isConfirmed) {
       badgeBg = const Color(0xFFE8F5E9);
       badgeColor = const Color(0xFF2E7D32);
+      final late = med['displayState'] == 'late_confirmed';
       badgeText = confTime.isNotEmpty
-          ? 'تم تأكيد التناول من قِبل المسن ($confTime)'
-          : 'تم تأكيد تناول الدواء';
+          ? (late
+              ? 'تأكيد متأخر من المسن ($confTime)'
+              : 'تم التأكيد من الخادم ($confTime)')
+          : displayLabel;
       badgeIcon = Icons.check_circle_rounded;
     } else if (isMissed) {
       badgeBg = const Color(0xFFFFEBEE);
       badgeColor = const Color(0xFFE53935);
-      badgeText = 'جرعة فائتة - لم يؤكد المسن تناولها!';
+      badgeText = 'متأخر — غير مؤكد (من الخادم)';
       badgeIcon = Icons.error_outline_rounded;
+    } else if (med['serverBacked'] != true) {
+      badgeBg = const Color(0xFFFFF8E1);
+      badgeColor = const Color(0xFFF57F17);
+      badgeText = 'حالة الالتزام غير متاحة — يلزم الاتصال';
+      badgeIcon = Icons.cloud_off_rounded;
     }
 
     return Container(
@@ -818,34 +829,23 @@ class _MedicinesPageState extends State<MedicinesPage> {
           ),
           const SizedBox(height: 8),
 
-          // أزرار إجراءات مقدم الرعاية: تأكيد نيابة عن المسن أو تذكير
+          // P2.2: المرافق قراءة فقط للالتزام + تذكير محلي (P2.3 مؤجّل)
           Row(
             children: [
               Expanded(
                 child: OutlinedButton.icon(
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: isConfirmed
-                        ? AppColors.textSecondary
-                        : const Color(0xFF2E7D32),
-                    side: BorderSide(
-                      color: isConfirmed
-                          ? const Color(0xFFBDBDBD)
-                          : const Color(0xFF2E7D32),
-                    ),
+                    foregroundColor: AppColors.textSecondary,
+                    side: const BorderSide(color: Color(0xFFBDBDBD)),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
                     ),
                     padding: const EdgeInsets.symmetric(vertical: 4),
                   ),
-                  onPressed: () => _toggleConfirm(originalIndex),
-                  icon: Icon(
-                    isConfirmed
-                        ? Icons.undo_rounded
-                        : Icons.check_circle_outline_rounded,
-                    size: 16,
-                  ),
+                  onPressed: _showCaregiverReadOnlyNotice,
+                  icon: const Icon(Icons.visibility_outlined, size: 16),
                   label: Text(
-                    isConfirmed ? 'إلغاء التأكيد' : 'تأكيد التناول',
+                    'اطلاع فقط — التأكيد من المسن',
                     style: GoogleFonts.cairo(
                       fontSize: 11,
                       fontWeight: FontWeight.bold,
@@ -871,7 +871,7 @@ class _MedicinesPageState extends State<MedicinesPage> {
                     icon: const Icon(Icons.notifications_active_rounded,
                         size: 16),
                     label: Text(
-                      'تذكير عاجل للمسن',
+                      'تذكير عاجل (محلي)',
                       style: GoogleFonts.cairo(
                         fontSize: 11,
                         fontWeight: FontWeight.bold,

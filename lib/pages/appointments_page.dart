@@ -1269,6 +1269,8 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
     final pageMessenger = ScaffoldMessenger.of(pageContext);
     final appointmentId = int.tryParse(item['id']?.toString() ?? '');
     var isSaving = false;
+    // Inline so Arabic invalid-date feedback is visible inside the modal.
+    var dateError = '';
 
     final appointmentTypes = [
       'موعد طبيب',
@@ -1353,6 +1355,11 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                         enabled: !isSaving,
                         style: GoogleFonts.cairo(fontSize: 13),
                         textAlign: TextAlign.right,
+                        onChanged: (_) {
+                          if (dateError.isNotEmpty) {
+                            setDialogState(() => dateError = '');
+                          }
+                        },
                         decoration: InputDecoration(
                           labelText: 'تاريخ الموعد',
                           labelStyle:
@@ -1360,6 +1367,8 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                           border: const OutlineInputBorder(),
                           filled: true,
                           fillColor: Colors.white,
+                          errorText: dateError.isEmpty ? null : dateError,
+                          errorMaxLines: 3,
                           suffixIcon: IconButton(
                             icon: const Icon(Icons.calendar_today_rounded,
                                 size: 18),
@@ -1375,6 +1384,9 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                                     if (d != null) {
                                       dateController.text =
                                           '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+                                      if (dateError.isNotEmpty) {
+                                        setDialogState(() => dateError = '');
+                                      }
                                     }
                                   },
                           ),
@@ -1510,16 +1522,22 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                                     .first
                                 : dateController.text.trim();
                             if (!_isValidAppointmentDate(dateText)) {
+                              const msg =
+                                  'تاريخ الموعد غير صالح. استخدم صيغة YYYY-MM-DD صحيحة.';
+                              setDialogState(() => dateError = msg);
                               pageMessenger.showSnackBar(
                                 SnackBar(
                                   content: Text(
-                                    'تاريخ الموعد غير صالح. استخدم صيغة YYYY-MM-DD صحيحة.',
+                                    msg,
                                     style: GoogleFonts.cairo(),
                                   ),
                                   backgroundColor: Colors.red.shade700,
                                 ),
                               );
                               return;
+                            }
+                            if (dateError.isNotEmpty) {
+                              setDialogState(() => dateError = '');
                             }
 
                             setDialogState(() => isSaving = true);

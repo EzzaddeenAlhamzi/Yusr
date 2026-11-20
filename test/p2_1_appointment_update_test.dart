@@ -130,6 +130,37 @@ void main() {
       );
     });
 
+    test('edit dialogs show Arabic invalid-date inline (visible in modal)', () {
+      const msg = 'تاريخ الموعد غير صالح. استخدم صيغة YYYY-MM-DD صحيحة.';
+      final cg = File('lib/pages/appointments_page.dart').readAsStringSync();
+      final el = File('lib/pages/dates.dart').readAsStringSync();
+      final cgEditStart = cg.indexOf('void _showEditAppointmentDialog');
+      final cgEditEnd = cg.indexOf('void _confirmDeleteAppointment');
+      final cgEdit = cg.substring(cgEditStart, cgEditEnd);
+      expect(cgEdit.contains("var dateError = ''"), isTrue);
+      expect(cgEdit.contains('setDialogState(() => dateError = msg)'), isTrue);
+      expect(cgEdit.contains(msg), isTrue);
+      expect(
+        cgEdit.contains('errorText: dateError.isEmpty ? null : dateError'),
+        isTrue,
+      );
+
+      final elEditStart = el.indexOf('void _editAppointment');
+      // Include full edit dialog (validation + inline error sit past ~9k chars).
+      final elEditEnd = el.indexOf('// ودجت كارت الموعد', elEditStart);
+      final elEdit = el.substring(
+        elEditStart,
+        elEditEnd > elEditStart ? elEditEnd : elEditStart + 20000,
+      );
+      expect(elEdit.contains("var dateError = ''"), isTrue);
+      expect(elEdit.contains('setDialogState(() => dateError = msg)'), isTrue);
+      expect(elEdit.contains(msg), isTrue);
+      expect(
+        elEdit.contains('errorText: dateError.isEmpty ? null : dateError'),
+        isTrue,
+      );
+    });
+
     test('create/list/delete API methods still present', () {
       final src = File('lib/core/services/api_service.dart').readAsStringSync();
       expect(src.contains('getAppointments'), isTrue);

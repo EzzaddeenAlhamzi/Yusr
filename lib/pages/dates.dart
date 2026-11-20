@@ -254,6 +254,9 @@ class _DatesScreenState extends State<DatesScreen> {
     final notesController = TextEditingController(text: item.notes ?? '');
     final pageMessenger = ScaffoldMessenger.of(context);
     var isSaving = false;
+    // Shown inside the dialog so invalid-date feedback stays visible above the
+    // modal (page SnackBar alone can sit behind the barrier / IME).
+    var dateError = '';
 
     showDialog(
       context: context,
@@ -325,6 +328,11 @@ class _DatesScreenState extends State<DatesScreen> {
                         fontWeight: FontWeight.w600,
                         color: Colors.black87,
                       ),
+                      onChanged: (_) {
+                        if (dateError.isNotEmpty) {
+                          setDialogState(() => dateError = '');
+                        }
+                      },
                       decoration: InputDecoration(
                         labelText: 'تاريخ الزيارة (YYYY-MM-DD)',
                         labelStyle: GoogleFonts.tajawal(
@@ -338,6 +346,8 @@ class _DatesScreenState extends State<DatesScreen> {
                         fillColor: backgroundColor,
                         contentPadding: const EdgeInsets.symmetric(
                             horizontal: 16, vertical: 14),
+                        errorText: dateError.isEmpty ? null : dateError,
+                        errorMaxLines: 3,
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(16),
                           borderSide: const BorderSide(color: cardBorderColor),
@@ -504,16 +514,22 @@ class _DatesScreenState extends State<DatesScreen> {
                         }
                         final dateText = dayController.text.trim();
                         if (!_isValidAppointmentDate(dateText)) {
+                          const msg =
+                              'تاريخ الموعد غير صالح. استخدم صيغة YYYY-MM-DD صحيحة.';
+                          setDialogState(() => dateError = msg);
                           pageMessenger.showSnackBar(
                             SnackBar(
                               content: Text(
-                                'تاريخ الموعد غير صالح. استخدم صيغة YYYY-MM-DD صحيحة.',
+                                msg,
                                 style: GoogleFonts.tajawal(fontSize: 16),
                               ),
                               backgroundColor: Colors.red.shade700,
                             ),
                           );
                           return;
+                        }
+                        if (dateError.isNotEmpty) {
+                          setDialogState(() => dateError = '');
                         }
                         final title = titleController.text.trim();
                         if (title.isEmpty) {

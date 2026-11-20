@@ -716,6 +716,57 @@ class ApiService {
     });
   }
 
+  /// P2.2 — جرعات اليوم من الخادم (مصدر الحقيقة للالتزام)
+  Future<Map<String, dynamic>> getTodayMedicationDoses({
+    int? elderlyId,
+    String? civilDate,
+  }) async {
+    final body = <String, dynamic>{'action': 'get_medication_doses_today'};
+    if (elderlyId != null) body['Elderly_ID'] = elderlyId;
+    if (civilDate != null && civilDate.isNotEmpty) {
+      body['civil_date'] = civilDate;
+    }
+    return _sendRequest(body);
+  }
+
+  /// P2.2 — سجل الالتزام من الخادم (أفق محدود)
+  Future<Map<String, dynamic>> getMedicationAdherenceHistory({
+    int? elderlyId,
+    String? from,
+    String? to,
+  }) async {
+    final body = <String, dynamic>{
+      'action': 'get_medication_adherence_history',
+    };
+    if (elderlyId != null) body['Elderly_ID'] = elderlyId;
+    if (from != null && from.isNotEmpty) body['from'] = from;
+    if (to != null && to.isNotEmpty) body['to'] = to;
+    return _sendRequest(body);
+  }
+
+  /// P2.2 — تأكيد جرعة على الخادم (كبير السن فقط؛ يتطلب اتصالاً)
+  Future<Map<String, dynamic>> confirmMedicationDose({
+    required int medicationId,
+    String? civilDate,
+    String? occurrenceKey,
+    String? clientConfirmId,
+  }) async {
+    final body = <String, dynamic>{
+      'action': 'confirm_medication_dose',
+      'Medicayion_ID': medicationId,
+    };
+    if (civilDate != null && civilDate.isNotEmpty) {
+      body['civil_date'] = civilDate;
+    }
+    if (occurrenceKey != null && occurrenceKey.isNotEmpty) {
+      body['occurrence_key'] = occurrenceKey;
+    }
+    if (clientConfirmId != null && clientConfirmId.isNotEmpty) {
+      body['client_confirm_id'] = clientConfirmId;
+    }
+    return _sendRequest(body);
+  }
+
   // ==================== المواعيد (appointments) ====================
 
   /// جلب المواعيد من قاعدة البيانات

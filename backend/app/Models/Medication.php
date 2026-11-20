@@ -25,4 +25,13 @@ class Medication extends Model
     {
         return $this->belongsTo(Elderly::class, 'Elderly_ID', 'Eldery_ID');
     }
+
+    public function doseOccurrences()
+    {
+        return $this->hasMany(
+            MedicationDoseOccurrence::class,
+            'Medicayion_ID',
+            'Medicayion_ID'
+        );
+    }
 }

@@ -99,6 +99,15 @@ class LegacyBridgeController extends Controller
                 return $this->medication->update($request);
             case 'delete_medication':
                 return $this->medication->destroy(null, $request);
+            case 'get_medication_doses_today':
+            case 'get_today_doses':
+                return $this->medication->todayDoses($request);
+            case 'get_medication_adherence_history':
+            case 'get_adherence_history':
+                return $this->medication->adherenceHistory($request);
+            case 'confirm_medication_dose':
+            case 'confirm_dose':
+                return $this->medication->confirmDose($request);
 
             case 'get_appointments':
                 return $this->appointment->index($request);

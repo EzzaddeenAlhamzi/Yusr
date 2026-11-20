@@ -60,7 +60,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/elderly/{id}', [ElderlyController::class, 'show']);
     Route::match(['put', 'post'], '/elderly/{id?}', [ElderlyController::class, 'update']);
 
-    // الأدوية
+    // الأدوية + التزام الجرعات (P2.2) — dose routes before {id} catch-alls
+    Route::get('/medications/doses/today', [MedicationController::class, 'todayDoses']);
+    Route::get('/medications/doses/history', [MedicationController::class, 'adherenceHistory']);
+    Route::post('/medications/doses/confirm', [MedicationController::class, 'confirmDose']);
     Route::get('/medications', [MedicationController::class, 'index']);
     Route::post('/medications', [MedicationController::class, 'store']);
     Route::match(['put', 'post'], '/medications/{id?}', [MedicationController::class, 'update']);

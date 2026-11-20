@@ -78,11 +78,14 @@ class SeniorManager extends ChangeNotifier {
             String nextTask = 'لا توجد مهام مسجلة';
             String nextTaskTime = '--:--';
             if (meds.isNotEmpty) {
-              nextTask = meds.first['M_Name'] ?? 'تناول الدواء';
-              nextTaskTime = meds.first['M_Time'] ?? '--:--';
+              nextTask = (meds.first['M_Name'] ?? 'تناول الدواء').toString();
+              // DB column is M_RepatTime (legacy typo); never invent M_Time.
+              nextTaskTime =
+                  (meds.first['M_RepatTime'] ?? meds.first['M_Time'] ?? '--:--')
+                      .toString();
             } else if (appts.isNotEmpty) {
-              nextTask = appts.first['A_DateType'] ?? 'موعد طبي';
-              nextTaskTime = appts.first['A_Time'] ?? '--:--';
+              nextTask = (appts.first['A_DateType'] ?? 'موعد طبي').toString();
+              nextTaskTime = (appts.first['A_Time'] ?? '--:--').toString();
             }
 
             String sName = (item['E_Name'] ?? '').toString().trim();
@@ -91,24 +94,27 @@ class SeniorManager extends ChangeNotifier {
             _seniors.add(SeniorModel(
               id: (item['Eldery_ID'] ?? linkedId).toString(),
               name: sName,
-              gender: (item['E_sex'] ?? 'ذكر').toString(),
+              gender: (item['E_sex'] ?? 'غير محدد').toString(),
               phoneNumber: (item['E_PhonNumber'] ?? '').toString(),
               relationship: 'كبير السن المشمول بالرعاية',
               age: 0,
               bloodType: 'غير محدد',
-              healthStatus: 'مستقر',
+              // No health summary column — do not invent "مستقر".
+              healthStatus: 'غير متوفر',
               chronicDiseases: [],
-              allergies: 'لا توجد',
+              allergies: 'غير محدد',
               criticalMedications: meds.map((m) => (m['M_Name'] ?? '').toString()).where((m) => m.isNotEmpty).toList(),
-              doctorName: 'طبيب الرعاية',
-              hospital: 'المركز الصحي',
+              doctorName: 'غير محدد',
+              hospital: 'غير محدد',
               location: 'الموقع غير محدد',
               nextTask: nextTask,
               nextTaskTime: nextTaskTime,
-              pairingCode: 'YS-$linkedId',
+              // Pairing codes are temporary server secrets — never invent YS-{id}.
+              pairingCode: '——',
               watchConnected: hasWatch,
               watchModel: watchModel,
-              watchBattery: hasWatch ? 85 : 0,
+              // Battery % is not in devices table — never fake 85%.
+              watchBattery: 0,
             ));
           }
         }
@@ -127,11 +133,13 @@ class SeniorManager extends ChangeNotifier {
             String nextTask = 'لا توجد مهام مسجلة';
             String nextTaskTime = '--:--';
             if (meds.isNotEmpty) {
-              nextTask = meds.first['M_Name'] ?? 'تناول الدواء';
-              nextTaskTime = meds.first['M_Time'] ?? '--:--';
+              nextTask = (meds.first['M_Name'] ?? 'تناول الدواء').toString();
+              nextTaskTime =
+                  (meds.first['M_RepatTime'] ?? meds.first['M_Time'] ?? '--:--')
+                      .toString();
             } else if (appts.isNotEmpty) {
-              nextTask = appts.first['A_DateType'] ?? 'موعد طبي';
-              nextTaskTime = appts.first['A_Time'] ?? '--:--';
+              nextTask = (appts.first['A_DateType'] ?? 'موعد طبي').toString();
+              nextTaskTime = (appts.first['A_Time'] ?? '--:--').toString();
             }
 
             String myName = (item['E_Name'] ?? '').toString().trim();
@@ -140,24 +148,24 @@ class SeniorManager extends ChangeNotifier {
             _seniors.add(SeniorModel(
               id: (item['Eldery_ID'] ?? myId).toString(),
               name: myName,
-              gender: (item['E_sex'] ?? 'ذكر').toString(),
+              gender: (item['E_sex'] ?? 'غير محدد').toString(),
               phoneNumber: (item['E_PhonNumber'] ?? '').toString(),
               relationship: 'حسابي',
               age: 0,
               bloodType: 'غير محدد',
-              healthStatus: 'مستقر',
+              healthStatus: 'غير متوفر',
               chronicDiseases: [],
-              allergies: 'لا توجد',
+              allergies: 'غير محدد',
               criticalMedications: meds.map((m) => (m['M_Name'] ?? '').toString()).where((m) => m.isNotEmpty).toList(),
-              doctorName: 'طبيب الرعاية',
-              hospital: 'المركز الصحي',
+              doctorName: 'غير محدد',
+              hospital: 'غير محدد',
               location: 'الموقع غير محدد',
               nextTask: nextTask,
               nextTaskTime: nextTaskTime,
-              pairingCode: 'YS-$myId',
+              pairingCode: '——',
               watchConnected: hasWatch,
               watchModel: watchModel,
-              watchBattery: hasWatch ? 85 : 0,
+              watchBattery: 0,
             ));
           }
         }

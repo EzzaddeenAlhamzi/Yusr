@@ -16,6 +16,7 @@ class NotificationsPage extends StatefulWidget {
 class _NotificationsPageState extends State<NotificationsPage> {
   String _selectedTab = 'الكل';
   bool _isLoading = true;
+  String? _fetchError;
   List<Map<String, dynamic>> _notifications = [];
 
   @override
@@ -25,13 +26,27 @@ class _NotificationsPageState extends State<NotificationsPage> {
   }
 
   Future<void> _fetchRealNotifications() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _fetchError = null;
+    });
     try {
       final auth = AuthService();
       final list = await ApiService.instance.getNotifications(
         caregiverId: auth.isCaregiver ? auth.userId : null,
         elderlyId: auth.isCaregiver ? auth.linkedElderlyId : auth.userId,
       );
+
+      if (list.isEmpty && ApiService.lastListError != null) {
+        if (mounted) {
+          setState(() {
+            _notifications = [];
+            _fetchError = ApiService.lastListError;
+            _isLoading = false;
+          });
+        }
+        return;
+      }
 
       final mapped = list.map((item) {
         final String title = (item['N_Title'] ?? 'تنبيه جديد').toString();
@@ -162,15 +177,19 @@ class _NotificationsPageState extends State<NotificationsPage> {
                                 color: AppColors.mainColor.withValues(alpha: 0.1),
                                 shape: BoxShape.circle,
                               ),
-                              child: const Icon(
-                                Icons.notifications_none_rounded,
+                              child: Icon(
+                                _fetchError != null
+                                    ? Icons.cloud_off_outlined
+                                    : Icons.notifications_none_rounded,
                                 size: 48,
                                 color: AppColors.mainColor,
                               ),
                             ),
                             const SizedBox(height: 16),
                             Text(
-                              'لا توجد إشعارات حالياً',
+                              _fetchError != null
+                                  ? 'تعذّر جلب الإشعارات'
+                                  : 'لا توجد إشعارات حالياً',
                               style: GoogleFonts.cairo(
                                 fontSize: 16,
                                 color: AppColors.textPrimary,
@@ -179,11 +198,14 @@ class _NotificationsPageState extends State<NotificationsPage> {
                             ),
                             const SizedBox(height: 6),
                             Text(
-                              'ستظهر هنا الإشعارات والتنبيهات المباشرة الواردة من قاعدة البيانات.',
+                              _fetchError ??
+                                  'ستظهر هنا الإشعارات والتنبيهات المباشرة الواردة من قاعدة البيانات.',
                               textAlign: TextAlign.center,
                               style: GoogleFonts.cairo(
                                 fontSize: 13,
-                                color: AppColors.textSecondary,
+                                color: _fetchError != null
+                                    ? Colors.red.shade700
+                                    : AppColors.textSecondary,
                               ),
                             ),
                           ],

@@ -38,6 +38,18 @@ class _DatesScreenState extends State<DatesScreen> {
           : int.tryParse(SeniorManager().currentSenior.id);
 
       final list = await ApiService.instance.getAppointments(elderlyId: seniorId);
+      if (list.isEmpty && ApiService.lastListError != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              ApiService.lastListError!,
+              style: GoogleFonts.tajawal(),
+            ),
+            backgroundColor: Colors.red.shade700,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
       final items = <AppointmentItem>[];
       for (final a in list) {
         final timeRaw = (a['A_Time'] ?? 'غير محدد').toString();
@@ -136,15 +148,39 @@ class _DatesScreenState extends State<DatesScreen> {
             onPressed: () async {
               final item = _appointments[index];
               Navigator.pop(ctx);
-              setState(() {
-                _appointments.removeAt(index);
-              });
-              if (item.id.isNotEmpty && int.tryParse(item.id) != null) {
-                try {
-                  await ApiService.instance.deleteAppointment(int.parse(item.id));
-                } catch (_) {}
+              if (item.id.isEmpty || int.tryParse(item.id) == null) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'تعذّر حذف الموعد: معرف غير صالح',
+                        style: GoogleFonts.tajawal(fontSize: 16),
+                      ),
+                      backgroundColor: Colors.red.shade700,
+                    ),
+                  );
+                }
+                return;
               }
-              if (mounted) {
+              try {
+                final res = await ApiService.instance
+                    .deleteAppointment(int.parse(item.id));
+                if (!mounted) return;
+                if (res['status'] != 'success') {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        res['message']?.toString() ?? 'تعذّر حذف الموعد',
+                        style: GoogleFonts.tajawal(fontSize: 16),
+                      ),
+                      backgroundColor: Colors.red.shade700,
+                    ),
+                  );
+                  return;
+                }
+                setState(() {
+                  _appointments.removeAt(index);
+                });
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text(
@@ -154,6 +190,18 @@ class _DatesScreenState extends State<DatesScreen> {
                     duration: const Duration(seconds: 2),
                   ),
                 );
+              } catch (_) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'تعذّر الاتصال بالخادم أثناء الحذف',
+                        style: GoogleFonts.tajawal(fontSize: 16),
+                      ),
+                      backgroundColor: Colors.red.shade700,
+                    ),
+                  );
+                }
               }
             },
             child: Text(
@@ -323,28 +371,18 @@ class _DatesScreenState extends State<DatesScreen> {
               ),
             ),
             onPressed: () {
-              final newTitle = titleController.text.trim();
-              final newDay = dayController.text.trim();
-              final newTime = timeController.text.trim();
-              if (newTitle.isNotEmpty) {
-                setState(() {
-                  _appointments[index] = AppointmentItem(
-                    title: newTitle,
-                    day: newDay.isNotEmpty ? newDay : item.day,
-                    time: newTime.isNotEmpty ? newTime : item.time,
-                  );
-                });
-                Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      'تم تعديل الموعد بنجاح',
-                      style: GoogleFonts.tajawal(fontSize: 18),
-                    ),
-                    duration: const Duration(seconds: 2),
+              // No appointment UPDATE route in Laravel API yet — do not fake success.
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    'تعديل الموعد على الخادم غير متاح حالياً. احذف الموعد وأضفه من جديد.',
+                    style: GoogleFonts.tajawal(fontSize: 16),
                   ),
-                );
-              }
+                  backgroundColor: Colors.orange.shade800,
+                  duration: const Duration(seconds: 4),
+                ),
+              );
             },
             child: Text(
               'حفظ التعديل',

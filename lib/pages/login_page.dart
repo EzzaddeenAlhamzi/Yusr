@@ -257,7 +257,7 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    'أدخل بريدك الإلكتروني المسجل، وسيتم التواصل معك لإرسال تعليمات إعادة تعيين كلمة المرور.',
+                    'أدخل بريدك الإلكتروني المسجل. إرسال رابط إعادة التعيين بالبريد غير مفعّل حالياً في المختبر — سيُعرض رد الخادم كما هو.',
                     style: GoogleFonts.cairo(
                       fontSize: 13.5,
                       color: AppColors.textSecondary,
@@ -304,14 +304,27 @@ class _LoginPageState extends State<LoginPage> {
                               );
                               if (context.mounted) {
                                 Navigator.pop(ctx);
+                                final ok = res['status'] == 'success';
+                                final emailSent = res['reset_email_sent'] == true;
+                                final msg = res['message']?.toString() ??
+                                    (ok
+                                        ? (emailSent
+                                            ? 'تم استلام طلب استعادة كلمة المرور'
+                                            : 'تم استلام الطلب. إرسال البريد غير مفعّل حالياً.')
+                                        : 'تعذّر إتمام طلب استعادة كلمة المرور');
+                                // Never paint "delivered" green when mailer did not send.
+                                final bg = !ok
+                                    ? Colors.red.shade700
+                                    : (emailSent
+                                        ? AppColors.mainColor
+                                        : Colors.orange.shade800);
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
                                     content: Text(
-                                      res['message'] ??
-                                          'تم استلام طلبك وسيتم التواصل معك عبر البريد الإلكتروني',
+                                      msg,
                                       style: GoogleFonts.cairo(),
                                     ),
-                                    backgroundColor: AppColors.mainColor,
+                                    backgroundColor: bg,
                                     duration: const Duration(seconds: 4),
                                   ),
                                 );

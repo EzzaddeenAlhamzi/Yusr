@@ -20,6 +20,11 @@ class AppTheme {
       scaffoldBackgroundColor: AppColors.backgroundColor,
       cardColor: AppColors.cardColor,
       textTheme: GoogleFonts.cairoTextTheme(),
+      // Keep cupertino import required across Flutter SDK layouts where
+      // CupertinoPageTransitionsBuilder resolution differs.
+      cupertinoOverrideTheme: const CupertinoThemeData(
+        brightness: Brightness.light,
+      ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: AppColors.cardColor,

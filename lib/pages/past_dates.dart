@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../core/services/api_service.dart';
+import '../core/services/auth_service.dart';
 import '../shard/color.dart';
 import '../shard/custom_header.dart';
 import '../shard/appointment_item.dart';
@@ -14,28 +16,78 @@ class PastDatesScreen extends StatefulWidget {
 }
 
 class _PastDatesScreenState extends State<PastDatesScreen> {
-  final List<AppointmentItem> _pastAppointments = [
-    AppointmentItem(
-      title: 'زيارة عائلية',
-      day: 'الجمعة الماضي',
-      time: 'الساعة 5 مساءً',
-    ),
-    AppointmentItem(
-      title: 'موعد فحص عيون',
-      day: 'الثلاثاء الماضي',
-      time: 'الساعة 10 صباحاً',
-    ),
-    AppointmentItem(
-      title: 'تجديد رخصة القيادة',
-      day: 'الخميس الماضي',
-      time: 'الساعة 11 صباحاً',
-    ),
-    AppointmentItem(
-      title: 'حضور مناسبة خاصة',
-      day: 'الأحد الماضي',
-      time: 'الساعة 8 مساءً',
-    ),
-  ];
+  List<AppointmentItem> _pastAppointments = [];
+  bool _isLoading = true;
+  String? _loadError;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPastAppointments();
+  }
+
+  DateTime? _parseDate(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    return DateTime.tryParse(raw.trim());
+  }
+
+  Future<void> _loadPastAppointments() async {
+    setState(() {
+      _isLoading = true;
+      _loadError = null;
+    });
+    try {
+      final seniorId = AuthService().userId;
+      final list =
+          await ApiService.instance.getAppointments(elderlyId: seniorId);
+      if (list.isEmpty && ApiService.lastListError != null) {
+        if (mounted) {
+          setState(() {
+            _pastAppointments = [];
+            _loadError = ApiService.lastListError;
+            _isLoading = false;
+          });
+        }
+        return;
+      }
+      final today = DateTime.now();
+      final startOfToday = DateTime(today.year, today.month, today.day);
+      final past = <AppointmentItem>[];
+      for (final a in list) {
+        final dateRaw = a['A_Date']?.toString();
+        final parsed = _parseDate(dateRaw);
+        // Only include rows with a parseable past date — never invent history.
+        if (parsed == null) continue;
+        final dayOnly = DateTime(parsed.year, parsed.month, parsed.day);
+        if (!dayOnly.isBefore(startOfToday)) continue;
+        final timeRaw = (a['A_Time'] ?? 'غير محدد').toString();
+        final timeFormatted =
+            timeRaw.length >= 5 ? timeRaw.substring(0, 5) : timeRaw;
+        past.add(AppointmentItem(
+          id: a['Appointment_ID']?.toString(),
+          title: (a['A_DateType'] ?? 'موعد').toString(),
+          day: dateRaw ?? '',
+          time: timeFormatted,
+          date: dateRaw,
+          notes: a['A_Note']?.toString(),
+        ));
+      }
+      past.sort((a, b) => (b.date ?? '').compareTo(a.date ?? ''));
+      if (mounted) {
+        setState(() {
+          _pastAppointments = past;
+          _isLoading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _loadError = 'تعذّر تحميل المواعيد السابقة من الخادم';
+          _isLoading = false;
+        });
+      }
+    }
+  }
 
   // دالة حذف الموعد الماضي مع نافذة تأكيد كبيرة وواضحة
   void _deleteAppointment(int index) {
@@ -91,8 +143,36 @@ class _PastDatesScreenState extends State<PastDatesScreen> {
                 borderRadius: BorderRadius.circular(14),
               ),
             ),
-            onPressed: () {
+            onPressed: () async {
+              final item = _pastAppointments[index];
               Navigator.pop(ctx);
+              final id = int.tryParse(item.id);
+              if (id == null) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'تعذّر حذف الموعد: معرف غير صالح',
+                      style: GoogleFonts.tajawal(fontSize: 18),
+                    ),
+                    backgroundColor: Colors.red.shade700,
+                  ),
+                );
+                return;
+              }
+              final res = await ApiService.instance.deleteAppointment(id);
+              if (!mounted) return;
+              if (res['status'] != 'success') {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      res['message']?.toString() ?? 'تعذّر حذف الموعد',
+                      style: GoogleFonts.tajawal(fontSize: 18),
+                    ),
+                    backgroundColor: Colors.red.shade700,
+                  ),
+                );
+                return;
+              }
               setState(() {
                 _pastAppointments.removeAt(index);
               });
@@ -215,42 +295,63 @@ class _PastDatesScreenState extends State<PastDatesScreen> {
                     ),
                     const SizedBox(height: 25),
 
-                    // قائمة المواعيد الماضية
+                    // قائمة المواعيد الماضية من API
                     Expanded(
-                      child: _pastAppointments.isEmpty
-                          ? Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.history_rounded,
-                                    size: 70,
-                                    color: Colors.grey[400],
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Text(
-                                    'لا توجد مواعيد سابقة',
-                                    style: GoogleFonts.tajawal(
-                                      fontSize: 22,
-                                      color: Colors.grey[600],
-                                      fontWeight: FontWeight.bold,
+                      child: _isLoading
+                          ? const Center(
+                              child: CircularProgressIndicator(color: appbarColor),
+                            )
+                          : _loadError != null
+                              ? Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(16),
+                                    child: Text(
+                                      _loadError!,
+                                      textAlign: TextAlign.center,
+                                      style: GoogleFonts.tajawal(
+                                        fontSize: 18,
+                                        color: Colors.red.shade700,
+                                        fontWeight: FontWeight.w600,
+                                      ),
                                     ),
                                   ),
-                                ],
-                              ),
-                            )
-                          : ListView.builder(
-                              physics: const AlwaysScrollableScrollPhysics(
-                                parent: BouncingScrollPhysics(),
-                              ),
-                              itemCount: _pastAppointments.length,
-                              itemBuilder: (context, index) {
-                                return _buildAppointmentCard(
-                                  _pastAppointments[index],
-                                  index,
-                                );
-                              },
-                            ),
+                                )
+                              : _pastAppointments.isEmpty
+                                  ? Center(
+                                      child: Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(
+                                            Icons.history_rounded,
+                                            size: 70,
+                                            color: Colors.grey[400],
+                                          ),
+                                          const SizedBox(height: 12),
+                                          Text(
+                                            'لا توجد مواعيد سابقة',
+                                            style: GoogleFonts.tajawal(
+                                              fontSize: 22,
+                                              color: Colors.grey[600],
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    )
+                                  : ListView.builder(
+                                      physics:
+                                          const AlwaysScrollableScrollPhysics(
+                                        parent: BouncingScrollPhysics(),
+                                      ),
+                                      itemCount: _pastAppointments.length,
+                                      itemBuilder: (context, index) {
+                                        return _buildAppointmentCard(
+                                          _pastAppointments[index],
+                                          index,
+                                        );
+                                      },
+                                    ),
                     ),
 
                     // زر "اضغط للتحدث"

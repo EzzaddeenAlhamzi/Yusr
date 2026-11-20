@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 // استدعاء ملفات الـ shard بناءً على هيكلية المشروع
 import '../shard/color.dart';
 import '../core/widgets/elderly_bottom_nav_bar.dart';
+import '../core/services/api_service.dart';
 import '../core/services/auth_service.dart';
 import 'ai_page.dart';
 import 'dates.dart';
@@ -16,11 +17,34 @@ import 'return_home_page.dart';
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
-  // دالة عرض نافذة الإشعارات
-  void _showNotificationsDialog(BuildContext context) {
-    // قائمة الإشعارات (فارغة حالياً حسب المطلوب)
-    final List<Map<String, dynamic>> notifications = [];
+  /// Load notifications from API — never invent placeholder rows.
+  Future<void> _showNotificationsDialog(BuildContext context) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const Center(
+        child: CircularProgressIndicator(color: appbarColor),
+      ),
+    );
 
+    List<Map<String, dynamic>> notifications = [];
+    String? fetchError;
+    try {
+      final id = AuthService().userId;
+      notifications = await ApiService.instance.getNotifications(
+        elderlyId: id,
+      );
+      if (notifications.isEmpty && ApiService.lastListError != null) {
+        fetchError = ApiService.lastListError;
+      }
+    } catch (_) {
+      fetchError = 'تعذّر جلب الإشعارات من الخادم';
+    }
+
+    if (!context.mounted) return;
+    Navigator.of(context, rootNavigator: true).pop(); // loading
+
+    if (!context.mounted) return;
     showDialog(
       context: context,
       builder: (ctx) => Dialog(
@@ -59,7 +83,29 @@ class HomePage extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 16),
-              if (notifications.isEmpty) ...[
+              if (fetchError != null) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 22,
+                  ),
+                  decoration: BoxDecoration(
+                    color: backgroundColor,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: cardBorderColor, width: 1),
+                  ),
+                  child: Text(
+                    fetchError,
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.tajawal(
+                      color: Colors.red.shade800,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ] else if (notifications.isEmpty) ...[
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(
@@ -109,6 +155,11 @@ class HomePage extends StatelessWidget {
                     separatorBuilder: (_, __) => const SizedBox(height: 10),
                     itemBuilder: (context, index) {
                       final notif = notifications[index];
+                      final text = (notif['N_Title'] ??
+                              notif['N_Message'] ??
+                              notif['text'] ??
+                              '')
+                          .toString();
                       return Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 14,
@@ -129,7 +180,7 @@ class HomePage extends StatelessWidget {
                             const SizedBox(width: 10),
                             Expanded(
                               child: Text(
-                                notif['text'] ?? '',
+                                text,
                                 style: GoogleFonts.tajawal(
                                   fontSize: 17,
                                   fontWeight: FontWeight.w600,
@@ -303,51 +354,7 @@ class HomePage extends StatelessWidget {
                               ),
                             ],
                           ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'حالة اليوم',
-                                style: GoogleFonts.tajawal(
-                                  color: const Color(0xFF4A6572),
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.start,
-                                children: [
-                                  const Icon(
-                                    Icons.check_circle_rounded,
-                                    color: Color(0xFF1B6B7A),
-                                    size: 38,
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Text(
-                                    'كل الامور جيدة',
-                                    style: GoogleFonts.tajawal(
-                                      color: Colors.black87,
-                                      fontSize: 26,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 6),
-                              Padding(
-                                padding: const EdgeInsets.only(right: 4.0),
-                                child: Text(
-                                  'تابع صحتك دائما',
-                                  style: GoogleFonts.tajawal(
-                                    color: Colors.grey[600],
-                                    fontSize: 17,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
+                          child: const _TodayStatusCard(),
                         ),
                       ),
 
@@ -664,6 +671,159 @@ class HomePage extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Status from API only — never invent “كل الامور جيدة”.
+class _TodayStatusCard extends StatefulWidget {
+  const _TodayStatusCard();
+
+  @override
+  State<_TodayStatusCard> createState() => _TodayStatusCardState();
+}
+
+class _TodayStatusCardState extends State<_TodayStatusCard> {
+  bool _loading = true;
+  String _headline = 'جاري التحميل…';
+  String _subtitle = '';
+  IconData _icon = Icons.hourglass_top_rounded;
+  Color _iconColor = const Color(0xFF1B6B7A);
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStatus();
+  }
+
+  Future<void> _loadStatus() async {
+    final id = AuthService().userId;
+    try {
+      final alerts =
+          await ApiService.instance.getHealthAlerts(elderlyId: id);
+      final alertErr = ApiService.lastListError;
+      final logs = await ApiService.instance.getEmergencyLog(elderlyId: id);
+      final logErr = ApiService.lastListError;
+
+      if (!mounted) return;
+
+      if ((alerts.isEmpty && alertErr != null) &&
+          (logs.isEmpty && logErr != null)) {
+        setState(() {
+          _loading = false;
+          _headline = 'تعذّر جلب الحالة';
+          // Both errors are non-null in this branch (analyzer-promoted).
+          _subtitle = alertErr.isNotEmpty ? alertErr : logErr;
+          _icon = Icons.cloud_off_outlined;
+          _iconColor = Colors.orange.shade800;
+        });
+        return;
+      }
+
+      final activeSos = logs.where((e) {
+        final state = (e['E_State'] ?? '').toString();
+        return state.contains('نشط') || state.toLowerCase().contains('active');
+      }).toList();
+
+      if (activeSos.isNotEmpty) {
+        setState(() {
+          _loading = false;
+          _headline = 'تنبيه طوارئ نشط';
+          _subtitle = 'يوجد ${activeSos.length} سجل طوارئ يحتاج متابعة';
+          _icon = Icons.warning_amber_rounded;
+          _iconColor = Colors.red.shade700;
+        });
+        return;
+      }
+
+      if (alerts.isNotEmpty) {
+        setState(() {
+          _loading = false;
+          _headline = 'توجد تنبيهات صحية';
+          _subtitle = 'عدد التنبيهات: ${alerts.length} — راجع صفحة الصحة';
+          _icon = Icons.monitor_heart_outlined;
+          _iconColor = Colors.orange.shade800;
+        });
+        return;
+      }
+
+      setState(() {
+        _loading = false;
+        _headline = 'لا توجد تنبيهات حالياً';
+        _subtitle = 'لا يعني ذلك اكتمال الفحص الصحي — راجع سجلاتك عند الحاجة';
+        _icon = Icons.info_outline_rounded;
+        _iconColor = const Color(0xFF1B6B7A);
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _headline = 'تعذّر جلب الحالة';
+        _subtitle = 'تحقق من اتصال الشبكة والخادم';
+        _icon = Icons.cloud_off_outlined;
+        _iconColor = Colors.red.shade700;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'حالة اليوم',
+          style: GoogleFonts.tajawal(
+            color: const Color(0xFF4A6572),
+            fontSize: 20,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (_loading)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: SizedBox(
+              width: 28,
+              height: 28,
+              child: CircularProgressIndicator(
+                strokeWidth: 3,
+                color: appbarColor,
+              ),
+            ),
+          )
+        else ...[
+          Row(
+            mainAxisAlignment: MainAxisAlignment.start,
+            children: [
+              Icon(_icon, color: _iconColor, size: 38),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  _headline,
+                  style: GoogleFonts.tajawal(
+                    color: Colors.black87,
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Padding(
+            padding: const EdgeInsets.only(right: 4.0),
+            child: Text(
+              _subtitle,
+              style: GoogleFonts.tajawal(
+                color: Colors.grey[600],
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
+      ],
     );
   }
 }

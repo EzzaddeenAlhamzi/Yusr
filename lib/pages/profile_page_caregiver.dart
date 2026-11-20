@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../core/constants/app_colors.dart';
 import '../core/widgets/custom_app_bar.dart';
 import '../core/widgets/custom_bottom_nav_bar.dart';
@@ -40,6 +42,31 @@ class _ProfilePageCaregiverState extends State<ProfilePageCaregiver> {
     _caregiverPhone = AuthService().userPhone ?? 'غير مسجل';
     _caregiverEmail = AuthService().userEmail ?? 'غير مسجل';
     _loadCaregiverData();
+    _loadLocalSettings();
+  }
+
+  Future<void> _loadLocalSettings() async {
+    final id = AuthService().userId;
+    if (id == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
+      setState(() {
+        _notificationsEnabled =
+            prefs.getBool('cg_notif_enabled_$id') ?? true;
+        _biometricEnabled = prefs.getBool('cg_biometric_pref_$id') ?? false;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _persistLocalSettings() async {
+    final id = AuthService().userId;
+    if (id == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('cg_notif_enabled_$id', _notificationsEnabled);
+      await prefs.setBool('cg_biometric_pref_$id', _biometricEnabled);
+    } catch (_) {}
   }
 
   Future<void> _loadCaregiverData() async {
@@ -61,9 +88,31 @@ class _ProfilePageCaregiverState extends State<ProfilePageCaregiver> {
             email: _caregiverEmail,
             linkedElderlyId: data['Eldery_ID'] != null ? int.tryParse(data['Eldery_ID'].toString()) : AuthService().linkedElderlyId,
           );
+        } else if (mounted && ApiService.lastListError != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                ApiService.lastListError!,
+                style: GoogleFonts.cairo(),
+              ),
+              backgroundColor: Colors.red.shade700,
+            ),
+          );
         }
       }
-    } catch (_) {}
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'تعذّر تحميل ملف مقدم الرعاية من الخادم',
+              style: GoogleFonts.cairo(),
+            ),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+    }
   }
 
   void _showEditCaregiverDialog() {
@@ -131,33 +180,59 @@ class _ProfilePageCaregiverState extends State<ProfilePageCaregiver> {
                 final newName = nameCtrl.text.trim();
                 final newPhone = phoneCtrl.text.trim();
                 final newEmail = emailCtrl.text.trim();
-                if (newName.isNotEmpty) {
-                  final navigator = Navigator.of(ctx);
-                  setState(() {
-                    _caregiverName = newName;
-                    if (newPhone.isNotEmpty) _caregiverPhone = newPhone;
-                    if (newEmail.isNotEmpty) _caregiverEmail = newEmail;
-                  });
-                  final id = AuthService().userId;
-                  if (id != null) {
-                    await ApiService.instance.updateCaregiver(
-                      caregiverId: id,
-                      name: newName,
-                      phone: newPhone.isNotEmpty ? newPhone : _caregiverPhone,
-                      email: newEmail.isNotEmpty ? newEmail : _caregiverEmail,
-                      relationship: _relationship,
-                    );
-                    if (!mounted) return;
-                    AuthService().setCaregiverSession(
-                      id: id,
-                      name: newName,
-                      phone: newPhone.isNotEmpty ? newPhone : _caregiverPhone,
-                      email: newEmail.isNotEmpty ? newEmail : _caregiverEmail,
-                    );
-                  }
-                  if (!ctx.mounted) return;
-                  navigator.pop();
+                if (newName.isEmpty) return;
+                final navigator = Navigator.of(ctx);
+                final messenger = ScaffoldMessenger.of(context);
+                final id = AuthService().userId;
+                if (id == null) return;
+                final phoneToSave =
+                    newPhone.isNotEmpty ? newPhone : _caregiverPhone;
+                final emailToSave =
+                    newEmail.isNotEmpty ? newEmail : _caregiverEmail;
+                final res = await ApiService.instance.updateCaregiver(
+                  caregiverId: id,
+                  name: newName,
+                  phone: phoneToSave == 'غير مسجل' ? '' : phoneToSave,
+                  email: emailToSave == 'غير مسجل' ? '' : emailToSave,
+                  relationship: _relationship,
+                );
+                if (!mounted) return;
+                if (res['status'] != 'success') {
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        res['message']?.toString() ??
+                            'تعذّر حفظ بيانات مقدم الرعاية',
+                        style: GoogleFonts.cairo(),
+                      ),
+                      backgroundColor: Colors.red.shade700,
+                    ),
+                  );
+                  return;
                 }
+                setState(() {
+                  _caregiverName = newName;
+                  if (newPhone.isNotEmpty) _caregiverPhone = newPhone;
+                  if (newEmail.isNotEmpty) _caregiverEmail = newEmail;
+                });
+                AuthService().setCaregiverSession(
+                  id: id,
+                  name: newName,
+                  phone: newPhone.isNotEmpty ? newPhone : _caregiverPhone,
+                  email: newEmail.isNotEmpty ? newEmail : _caregiverEmail,
+                  linkedElderlyId: AuthService().linkedElderlyId,
+                );
+                if (!ctx.mounted) return;
+                navigator.pop();
+                messenger.showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'تم حفظ الملف الشخصي بنجاح',
+                      style: GoogleFonts.cairo(),
+                    ),
+                    backgroundColor: AppColors.mainColor,
+                  ),
+                );
               },
               child: Text('حفظ', style: GoogleFonts.cairo(color: Colors.white, fontWeight: FontWeight.bold)),
             ),
@@ -187,11 +262,16 @@ class _ProfilePageCaregiverState extends State<ProfilePageCaregiver> {
         actions: [
           IconButton(
             icon: const Icon(Icons.share_outlined, color: Colors.white),
-            onPressed: () {
+            onPressed: () async {
+              // No public profile URL in lab — copy display identity, not a fake link.
+              final summary =
+                  '$_caregiverName · $_caregiverPhone · $_caregiverEmail';
+              await Clipboard.setData(ClipboardData(text: summary));
+              if (!context.mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text(
-                    'تم نسخ رابط الملف الشخصي',
+                    'تم نسخ بيانات الملف الشخصي (لا يوجد رابط مشاركة عام حالياً)',
                     style: GoogleFonts.cairo(color: Colors.white),
                   ),
                   backgroundColor: AppColors.mainColor,
@@ -624,7 +704,10 @@ class _ProfilePageCaregiverState extends State<ProfilePageCaregiver> {
                 style: GoogleFonts.cairo(fontSize: 12, color: Colors.grey.shade600),
               ),
               value: _notificationsEnabled,
-              onChanged: (val) => setState(() => _notificationsEnabled = val),
+              onChanged: (val) async {
+                setState(() => _notificationsEnabled = val);
+                await _persistLocalSettings();
+              },
             ),
             const Divider(height: 20),
             SwitchListTile(
@@ -639,11 +722,26 @@ class _ProfilePageCaregiverState extends State<ProfilePageCaregiver> {
                 ),
               ),
               subtitle: Text(
-                'حماية التطبيق بالقياسات الحيوية',
+                'تفضيل محلي فقط — المصادقة الحيوية غير مفعّلة في هذا الإصدار',
                 style: GoogleFonts.cairo(fontSize: 12, color: Colors.grey.shade600),
               ),
               value: _biometricEnabled,
-              onChanged: (val) => setState(() => _biometricEnabled = val),
+              onChanged: (val) async {
+                setState(() => _biometricEnabled = val);
+                await _persistLocalSettings();
+                if (!mounted) return;
+                if (val) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'تم حفظ التفضيل محلياً. الدخول بالبصمة غير متاح حالياً.',
+                        style: GoogleFonts.cairo(),
+                      ),
+                      backgroundColor: Colors.orange.shade800,
+                    ),
+                  );
+                }
+              },
             ),
           ],
         ),
@@ -672,7 +770,20 @@ class _ProfilePageCaregiverState extends State<ProfilePageCaregiver> {
                         ))
                     .toList(),
                 onChanged: (val) {
-                  if (val != null) setState(() => _selectedLanguage = val);
+                  if (val == null) return;
+                  if (val != 'العربية') {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'الواجهة الإنجليزية غير متاحة حالياً. التطبيق يعمل بالعربية.',
+                          style: GoogleFonts.cairo(),
+                        ),
+                        backgroundColor: Colors.orange.shade800,
+                      ),
+                    );
+                    return;
+                  }
+                  setState(() => _selectedLanguage = val);
                 },
               ),
             ),
@@ -681,14 +792,34 @@ class _ProfilePageCaregiverState extends State<ProfilePageCaregiver> {
               icon: Icons.help_outline,
               title: 'مركز المساعدة والدعم الفني',
               subtitle: 'الأسئلة الشائعة والتواصل مع الدعم',
-              onTap: () {},
+              onTap: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'مركز المساعدة غير متاح في هذا الإصدار (مؤجّل).',
+                      style: GoogleFonts.cairo(),
+                    ),
+                    backgroundColor: Colors.orange.shade800,
+                  ),
+                );
+              },
             ),
             const Divider(height: 1),
             _buildMenuTile(
               icon: Icons.privacy_tip_outlined,
               title: 'سياسة الخصوصية والشروط',
               subtitle: 'معلومات الأمان وحماية البيانات',
-              onTap: () {},
+              onTap: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'صفحة الخصوصية غير متاحة في هذا الإصدار (مؤجّل).',
+                      style: GoogleFonts.cairo(),
+                    ),
+                    backgroundColor: Colors.orange.shade800,
+                  ),
+                );
+              },
             ),
           ],
         ),
@@ -700,35 +831,34 @@ class _ProfilePageCaregiverState extends State<ProfilePageCaregiver> {
     required String title,
     required List<Widget> children,
   }) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: AppColors.cardColor,
+    // Material ancestor required for ListTile / SwitchListTile / InkWell ink.
+    return Material(
+      color: AppColors.cardColor,
+      elevation: 0,
+      shadowColor: Colors.black.withValues(alpha: 0.03),
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.cardBorderColor.withValues(alpha: 0.6)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 8,
-            offset: const Offset(0, 3),
-          ),
-        ],
+        side: BorderSide(
+          color: AppColors.cardBorderColor.withValues(alpha: 0.6),
+        ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: GoogleFonts.cairo(
-              fontSize: 15,
-              fontWeight: FontWeight.bold,
-              color: AppColors.mainColor,
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: GoogleFonts.cairo(
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+                color: AppColors.mainColor,
+              ),
             ),
-          ),
-          const SizedBox(height: 14),
-          ...children,
-        ],
+            const SizedBox(height: 14),
+            ...children,
+          ],
+        ),
       ),
     );
   }

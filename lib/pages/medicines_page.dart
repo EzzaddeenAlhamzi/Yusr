@@ -5,6 +5,7 @@ import '../core/constants/app_colors.dart';
 import '../core/widgets/custom_app_bar.dart';
 import '../core/widgets/senior_selector_widget.dart';
 import '../core/services/api_service.dart';
+import '../core/services/auth_service.dart';
 import '../core/services/medication_adherence_helper.dart';
 import '../core/services/senior_manager.dart';
 
@@ -231,25 +232,56 @@ class _MedicinesPageState extends State<MedicinesPage> {
     }
   }
 
-  void _sendUrgentReminder(String medName) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.notifications_active_rounded, color: Colors.white),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'تم إرسال تذكير عاجل للمسن بتناول ($medName) 🔔',
-                style: GoogleFonts.cairo(fontWeight: FontWeight.bold),
-              ),
-            ),
-          ],
+  /// P2.3 Lock J — Option A: real in-app notification via API; no fake success.
+  Future<void> _sendUrgentReminder(String medName) async {
+    final auth = AuthService();
+    final elderlyId = auth.linkedElderlyId;
+    if (elderlyId == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'غير متاح: لا يوجد كبير سن مرتبط لإرسال تذكير داخل التطبيق.',
+            style: GoogleFonts.cairo(fontWeight: FontWeight.bold),
+          ),
+          backgroundColor: const Color(0xFF546E7A),
+          duration: const Duration(seconds: 4),
         ),
-        backgroundColor: const Color(0xFFE53935),
-        duration: const Duration(seconds: 3),
-      ),
+      );
+      return;
+    }
+    final res = await ApiService.instance.addNotification(
+      title: 'تذكير عاجل بالدواء',
+      message: 'يرجى تناول «$medName» عند الاستطاعة. (تذكير داخل التطبيق — ليس دفعاً خارجياً)',
+      type: 'urgent_med',
+      elderlyId: elderlyId,
+      caregiverId: auth.userId,
     );
+    if (!mounted) return;
+    if (res['status'] == 'success') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'تم إنشاء تذكير داخل التطبيق للمسن بخصوص ($medName).',
+            style: GoogleFonts.cairo(fontWeight: FontWeight.bold),
+          ),
+          backgroundColor: const Color(0xFF2E7D32),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            res['message']?.toString() ??
+                'تعذّر إرسال التذكير العاجل. لم يُرسل أي تنبيه.',
+            style: GoogleFonts.cairo(fontWeight: FontWeight.bold),
+          ),
+          backgroundColor: Colors.red.shade700,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
   }
 
   List<Map<String, dynamic>> get _filteredMedicines {

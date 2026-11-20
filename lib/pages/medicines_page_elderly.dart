@@ -4,8 +4,11 @@ import 'package:google_fonts/google_fonts.dart';
 import '../shard/color.dart';
 import '../shard/custom_header.dart';
 import '../shard/medicine_item.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../core/services/api_service.dart';
 import '../core/services/auth_service.dart';
+import '../core/services/local_notification_service.dart';
 import '../core/services/medication_adherence_helper.dart';
 import 'ai_page.dart';
 import 'add_medicine.dart';
@@ -129,6 +132,9 @@ class _MedicinesPageElderlyState extends State<MedicinesPageElderly> {
           }
           _dosesOffline = dosesOffline || medsConnectionError;
         });
+        if (!dosesOffline && elderlyId != null) {
+          await _syncLocalMedReminders(elderlyId, doseMap.values.toList());
+        }
       }
     } catch (_) {
       if (mounted) {
@@ -139,6 +145,24 @@ class _MedicinesPageElderlyState extends State<MedicinesPageElderly> {
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _syncLocalMedReminders(
+    int elderlyId,
+    List<Map<String, dynamic>> doses,
+  ) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await LocalNotificationService.instance.syncMedicationDoses(
+        elderlyId: elderlyId,
+        doses: doses,
+        remindersEnabledForMed: (medId) {
+          return prefs.getBool('med_reminder_active_${elderlyId}_$medId') ?? true;
+        },
+      );
+    } catch (_) {
+      // Scheduling failure must not block med UI.
     }
   }
 
@@ -186,6 +210,17 @@ class _MedicinesPageElderlyState extends State<MedicinesPageElderly> {
           MedicationAdherenceHelper.confirmFailureMessage(res),
         );
         return;
+      }
+      // Lock H/I: cancel local reminder after real server Taken — never auto-taken from reminder.
+      final occKey = dose?['occurrence_key']?.toString();
+      final eid = AuthService().userId;
+      if (occKey != null && eid != null) {
+        try {
+          await LocalNotificationService.instance.cancelMedicationOccurrence(
+            elderlyId: eid,
+            occurrenceKey: occKey,
+          );
+        } catch (_) {}
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(

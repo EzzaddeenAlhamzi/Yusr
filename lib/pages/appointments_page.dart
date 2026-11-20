@@ -6,6 +6,9 @@ import '../core/constants/app_colors.dart';
 import '../core/widgets/custom_app_bar.dart';
 import '../core/widgets/senior_selector_widget.dart';
 import '../core/services/api_service.dart';
+import '../core/services/auth_service.dart';
+import '../core/services/local_notification_ids.dart';
+import '../core/services/local_notification_service.dart';
 import '../core/services/senior_manager.dart';
 
 class AppointmentsPage extends StatefulWidget {
@@ -130,6 +133,9 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
         setState(() {
           _allAppointments = loaded;
         });
+        if (seniorId != null) {
+          await _syncLocalAppointmentReminders(seniorId, loaded);
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -147,6 +153,36 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  /// P2.3 Lock K — local appointment reminders (default offset 60m PROPOSED).
+  Future<void> _syncLocalAppointmentReminders(
+    int seniorId,
+    List<Map<String, dynamic>> items,
+  ) async {
+    try {
+      final uid = AuthService().userId ?? seniorId;
+      final quiet = await LocalNotificationService.instance.loadQuietHours(uid);
+      for (final item in items) {
+        if (item['isCancelled'] == true || item['isPast'] == true) continue;
+        final id = item['id'] is int
+            ? item['id'] as int
+            : int.tryParse(item['id']?.toString() ?? '');
+        final dt = item['dateTime'];
+        if (id == null || dt is! DateTime) continue;
+        final offset = AppointmentReminderOffset.minutesFromLabel(
+          item['advanceReminder']?.toString(),
+        );
+        await LocalNotificationService.instance.scheduleAppointmentReminder(
+          elderlyId: seniorId,
+          appointmentId: id,
+          title: item['title']?.toString() ?? 'موعد',
+          appointmentAtLocal: dt,
+          offsetMinutes: offset,
+          quiet: quiet,
+        );
+      }
+    } catch (_) {}
   }
 
   /// True only for real calendar dates (rejects `2026-13-40`).

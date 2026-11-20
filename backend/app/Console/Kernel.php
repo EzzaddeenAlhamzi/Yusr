@@ -12,7 +12,9 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule): void
     {
-        // $schedule->command('inspire')->hourly();
+        // P2.3 Channel B — idempotent overdue unconfirmed → caregiver in-app alerts.
+        // No FCM. Safe to re-run (unique Caregiver_ID+event_type+occurrence_key).
+        $schedule->command('notifications:dispatch-overdue-med-alerts')->everyMinute();
     }
 
     /**

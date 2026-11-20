@@ -27,13 +27,16 @@ class NotificationController extends Controller
                 return YusrAccess::forbidden('غير مصرح بعرض إشعارات مقدم رعاية آخر');
             }
 
-            $elderlyIds = YusrAccess::accessibleElderlyIds($actor);
-            $query->where(function ($q) use ($caregiverId, $elderlyIds) {
-                $q->where('Caregiver_ID', $caregiverId);
-                if ($elderlyIds !== []) {
-                    $q->orWhereIn('Eldery_ID', $elderlyIds);
+            // Isolation: caregiver sees only rows addressed to them.
+            $query->where('Caregiver_ID', $caregiverId);
+
+            $requestedEl = YusrAccess::resolveElderlyId($request);
+            if ($requestedEl !== null) {
+                if (! YusrAccess::canAccessElderly($actor, $requestedEl)) {
+                    return YusrAccess::forbidden('غير مصرح بعرض إشعارات كبير سن غير مرتبط');
                 }
-            });
+                $query->where('Eldery_ID', $requestedEl);
+            }
         } else {
             $elderlyId = (int) $actor->Eldery_ID;
             $requestedEl = YusrAccess::resolveElderlyId($request);
@@ -43,11 +46,30 @@ class NotificationController extends Controller
             $query->where('Eldery_ID', $elderlyId);
         }
 
+        $unreadOnly = $request->query('unread_only', $request->input('unread_only'));
+        if ($unreadOnly === '1' || $unreadOnly === 1 || $unreadOnly === true || $unreadOnly === 'true') {
+            $query->where(function ($q) {
+                $q->where('N_Status', Notification::STATUS_UNREAD)
+                    ->orWhere('N_Status', 'unread')
+                    ->orWhere('N_Status', 'جديد')
+                    ->orWhereNull('N_Status')
+                    ->orWhere('N_Status', '');
+            });
+        }
+
         $notifications = $query->orderBy('Notifications_ID', 'desc')->get();
+
+        $unreadCount = 0;
+        foreach ($notifications as $n) {
+            if ($n->isUnread()) {
+                $unreadCount++;
+            }
+        }
 
         return response()->json([
             'status' => 'success',
             'data' => $notifications,
+            'unread_count' => $unreadCount,
         ]);
     }
 
@@ -80,9 +102,15 @@ class NotificationController extends Controller
             if ($elderlyId === null || $elderlyId === '') {
                 $elderlyId = $actor->Eldery_ID;
             }
+            if ($elderlyId === null || $elderlyId === '') {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'لا يوجد كبير سن مرتبط لإرسال التنبيه',
+                    'error_type' => 'no_linked_elderly',
+                ], 200);
+            }
         } else {
             $elderlyId = (int) $actor->Eldery_ID;
-            // Elderly cannot spoof caregiver destination.
             if ($caregiverId !== null && $caregiverId !== '') {
                 if (! YusrAccess::canViewCaregiver($actor, $caregiverId)) {
                     return YusrAccess::forbidden('غير مصرح بإرسال إشعار لمقدم رعاية غير مرتبط');
@@ -96,9 +124,12 @@ class NotificationController extends Controller
             'N_Title' => $title,
             'N_Message' => $message,
             'N_Type' => $type,
+            'event_type' => $request->input('event_type'),
+            'occurrence_key' => $request->input('occurrence_key'),
+            'DoseOccurrence_ID' => $request->input('DoseOccurrence_ID'),
             'N_Date' => now()->format('Y-m-d'),
             'N_Time' => now()->format('H:i:s'),
-            'N_Status' => 'غير مقروء',
+            'N_Status' => Notification::STATUS_UNREAD,
             'Caregiver_ID' => $caregiverId,
             'Eldery_ID' => $elderlyId,
         ]);
@@ -108,5 +139,45 @@ class NotificationController extends Controller
             'message' => 'تم إنشاء الإشعار بنجاح',
             'data' => $notification,
         ], 201);
+    }
+
+    public function markRead(Request $request, $id = null)
+    {
+        $actor = YusrAccess::requireActor($request);
+        if ($actor instanceof \Illuminate\Http\JsonResponse) {
+            return $actor;
+        }
+
+        $id = $id ?? $request->input('Notifications_ID', $request->input('id'));
+        $id = (int) $id;
+        if ($id <= 0) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'معرّف الإشعار مطلوب',
+            ], 200);
+        }
+
+        $notification = Notification::query()->where('Notifications_ID', $id)->first();
+        if (! $notification) {
+            return YusrAccess::notFound('الإشعار غير موجود');
+        }
+
+        if ($actor instanceof Caregiver) {
+            if ((int) $notification->Caregiver_ID !== (int) $actor->Caregivers_ID) {
+                return YusrAccess::forbidden('غير مصرح بتحديث إشعار مقدم رعاية آخر');
+            }
+        } else {
+            if ((int) $notification->Eldery_ID !== (int) $actor->Eldery_ID) {
+                return YusrAccess::forbidden('غير مصرح بتحديث إشعار كبير سن آخر');
+            }
+        }
+
+        $notification->markRead();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'تم تعليم الإشعار كمقروء',
+            'data' => $notification->fresh(),
+        ]);
     }
 }

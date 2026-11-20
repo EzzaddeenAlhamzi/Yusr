@@ -73,6 +73,12 @@ class _NotificationsPageState extends State<NotificationsPage> {
           icon = Icons.location_on;
         }
 
+        final unread = status == 'unread' ||
+            status == 'جديد' ||
+            status == 'غير مقروء' ||
+            status.isEmpty ||
+            status.toLowerCase() == 'active';
+
         return {
           'id': item['Notifications_ID'],
           'title': title,
@@ -81,7 +87,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
           'subText': type,
           'type': type,
           'icon': icon,
-          'isUnread': status == 'unread' || status == 'جديد',
+          'isUnread': unread,
+          'occurrence_key': item['occurrence_key'],
+          'event_type': item['event_type'],
         };
       }).toList();
 
@@ -407,10 +415,36 @@ class _NotificationsPageState extends State<NotificationsPage> {
             children: [
               // تبديل حالة القراءة
               InkWell(
-                onTap: () {
-                  setState(() {
-                    item['isUnread'] = !(item['isUnread'] as bool);
-                  });
+                onTap: () async {
+                  final wasUnread = item['isUnread'] == true;
+                  if (!wasUnread) {
+                    setState(() => item['isUnread'] = true);
+                    return;
+                  }
+                  final id = item['id'] is int
+                      ? item['id'] as int
+                      : int.tryParse(item['id']?.toString() ?? '');
+                  if (id == null) {
+                    setState(() => item['isUnread'] = false);
+                    return;
+                  }
+                  final res =
+                      await ApiService.instance.markNotificationRead(id);
+                  if (!mounted) return;
+                  if (res['status'] == 'success') {
+                    setState(() => item['isUnread'] = false);
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          res['message']?.toString() ??
+                              'تعذّر تعليم الإشعار كمقروء على الخادم',
+                          style: GoogleFonts.cairo(),
+                        ),
+                        backgroundColor: Colors.red.shade700,
+                      ),
+                    );
+                  }
                 },
                 borderRadius: BorderRadius.circular(8),
                 child: Padding(

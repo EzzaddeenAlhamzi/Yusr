@@ -161,6 +161,9 @@ class LegacyBridgeController extends Controller
                 return $this->notification->index($request);
             case 'add_notification':
                 return $this->notification->store($request);
+            case 'mark_notification_read':
+            case 'read_notification':
+                return $this->notification->markRead($request);
 
             case 'get_type_of_care':
                 return $this->service->getTypeOfCare($request);

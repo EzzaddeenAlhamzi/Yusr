@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../../core/services/api_service.dart';
+import '../../core/services/local_notification_service.dart';
 import '../../core/services/medication_adherence_helper.dart';
 import '../../core/services/senior_manager.dart';
 
@@ -55,14 +58,28 @@ class _SimpleMedicinesPageState extends State<SimpleMedicinesPage> {
       );
       if (!mounted) return;
       if (res['status'] == 'success' && res['data'] is List) {
+        final doses = (res['data'] as List)
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
         setState(() {
           _offline = false;
           _error = null;
-          _doses = (res['data'] as List)
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
+          _doses = doses;
         });
+        if (seniorId != null) {
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            await LocalNotificationService.instance.syncMedicationDoses(
+              elderlyId: seniorId,
+              doses: doses,
+              remindersEnabledForMed: (medId) {
+                return prefs.getBool('med_reminder_active_${seniorId}_$medId') ??
+                    true;
+              },
+            );
+          } catch (_) {}
+        }
       } else {
         final offline = MedicationAdherenceHelper.isConnectionFailure(res);
         setState(() {
@@ -128,6 +145,16 @@ class _SimpleMedicinesPageState extends State<SimpleMedicinesPage> {
           MedicationAdherenceHelper.confirmFailureMessage(res),
         );
         return;
+      }
+      final occKey = dose['occurrence_key']?.toString();
+      final eid = int.tryParse(SeniorManager().currentSenior?.id ?? '');
+      if (occKey != null && eid != null) {
+        try {
+          await LocalNotificationService.instance.cancelMedicationOccurrence(
+            elderlyId: eid,
+            occurrenceKey: occKey,
+          );
+        } catch (_) {}
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(

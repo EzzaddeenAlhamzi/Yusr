@@ -117,9 +117,18 @@ class _ProfilePageElderlyState extends State<ProfilePageElderly> {
     try {
       final id = AuthService().userId;
       if (id == null) return false;
-      final sex = (_userSex == 'غير محدد' || _userSex.trim().isEmpty)
-          ? 'ذكر'
-          : _userSex;
+      final sex = _userSex.trim();
+      if (sex.isEmpty || sex == 'غير محدد') {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('يرجى اختيار الجنس قبل الحفظ.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return false;
+      }
       final res = await ApiService.instance.updateElderly(
         elderlyId: id,
         name: _userName,
@@ -615,7 +624,8 @@ class _ProfilePageElderlyState extends State<ProfilePageElderly> {
                     _emergencyPhone = phone;
                   });
                   Navigator.pop(ctx);
-                  _showSavedSnackBar('تم تحديث جهة اتصال الطوارئ بنجاح');
+                  // Backend has add only (no update_emergency_contact) — honest wording.
+                  _showSavedSnackBar('تم إضافة جهة اتصال الطوارئ بنجاح');
                 },
                 child: Text(
                   'حفظ',

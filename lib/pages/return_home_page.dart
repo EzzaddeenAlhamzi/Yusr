@@ -109,14 +109,44 @@ class _ReturnHomePageState extends State<ReturnHomePage> {
   }
 
   Future<void> _shareLocation() async {
-    final lat = _currentLat ?? 15.3694;
-    final lng = _currentLng ?? 44.1910;
+    final lat = _currentLat;
+    final lng = _currentLng;
+    if (lat == null || lng == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'تعذّر مشاركة الموقع: لا توجد إحداثيات GPS متاحة حالياً.',
+              style: GoogleFonts.tajawal(),
+            ),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+      return;
+    }
     final Uri mapUri = Uri.parse('https://maps.google.com/?q=$lat,$lng');
     try {
       if (await canLaunchUrl(mapUri)) {
         await launchUrl(mapUri, mode: LaunchMode.externalApplication);
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تعذّر فتح تطبيق الخرائط.', style: GoogleFonts.tajawal()),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
       }
-    } catch (_) {}
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تعذّر مشاركة الموقع.', style: GoogleFonts.tajawal()),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+    }
   }
 
   @override

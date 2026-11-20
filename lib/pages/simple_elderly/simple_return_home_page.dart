@@ -10,19 +10,36 @@ class SimpleReturnHomePage extends StatelessWidget {
   const SimpleReturnHomePage({super.key});
 
   Future<void> _startHomeNavigation(BuildContext context) async {
-    String destination = '15.3694,44.1910';
+    String? destination;
     try {
       final uid = AuthService().userId;
       if (uid != null) {
         final elderly = await ApiService.instance.getElderly(uid);
         if (elderly != null) {
-          final addr = elderly['E_Location']?.toString() ?? elderly['E_Address']?.toString() ?? '';
+          final addr = elderly['E_Location']?.toString() ??
+              elderly['E_Address']?.toString() ??
+              '';
           if (addr.isNotEmpty) {
             destination = addr;
           }
         }
       }
     } catch (_) {}
+
+    if (destination == null || destination.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'تعذّر بدء التوجيه: عنوان المنزل غير متوفر في الملف.',
+              style: GoogleFonts.cairo(fontSize: 16),
+            ),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+      return;
+    }
 
     final uri = Uri.parse('google.navigation:q=${Uri.encodeComponent(destination)}&mode=d');
     final webUri = Uri.parse('https://www.google.com/maps/dir/?api=1&destination=${Uri.encodeComponent(destination)}');
@@ -31,18 +48,16 @@ class SimpleReturnHomePage extends StatelessWidget {
       await launchUrl(uri);
     } else if (await canLaunchUrl(webUri)) {
       await launchUrl(webUri, mode: LaunchMode.externalApplication);
-    } else {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'جاري تشغيل المساعد الصوتي لتوجيهك إلى المنزل خطوة بخطوة...',
-              style: GoogleFonts.cairo(fontSize: 16),
-            ),
-            backgroundColor: const Color(0xFF1565C0),
+    } else if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'تعذّر فتح تطبيق الخرائط للتوجيه إلى المنزل.',
+            style: GoogleFonts.cairo(fontSize: 16),
           ),
-        );
-      }
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
     }
   }
 

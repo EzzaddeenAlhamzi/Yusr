@@ -149,47 +149,74 @@ class _EmergencyPageElderlyState extends State<EmergencyPageElderly>
     setState(() {
       _secondsRemaining = 0;
       _isTriggered = true;
-      _callInitiated = true;
-      _smsSent = true;
-      _locationSent = true;
+      // Flags set only after real outcomes — never invent success.
+      _callInitiated = false;
+      _smsSent = false;
+      _locationSent = false;
     });
 
     _pulseController.stop();
 
-    // تسجيل نداء الطوارئ في قاعدة البيانات
+    bool logOk = false;
     try {
       final elderlyId = AuthService().userId;
       if (elderlyId != null) {
-        await ApiService.instance.addEmergencyLog(
+        final res = await ApiService.instance.addEmergencyLog(
           elderlyId: elderlyId,
-          description: 'نداء SOS تلقائي - تم الاتصال بـ $_contactName ($_contactPhone)',
+          description: 'نداء SOS تلقائي - محاولة اتصال بـ $_contactName ($_contactPhone)',
           status: 'تم الإرسال',
         );
+        logOk = res['status'] == 'success' || res['success'] == true;
       }
-    } catch (_) {}
+    } catch (_) {
+      logOk = false;
+    }
+
+    if (mounted) {
+      setState(() {
+        // SMS channel not wired in lab — keep honest false.
+        _smsSent = false;
+        _locationSent = logOk;
+      });
+      if (!logOk) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'تعذّر تسجيل نداء الطوارئ على الخادم. سيتم محاولة الاتصال المحلي.',
+              style: GoogleFonts.cairo(),
+            ),
+            backgroundColor: Colors.orange.shade800,
+          ),
+        );
+      }
+    }
 
     // إجراء اتصال هاتفي بجهة الاتصال الحقيقية
-    await _makePhoneCall(_contactPhone);
+    final called = await _makePhoneCall(_contactPhone);
+    if (mounted) {
+      setState(() => _callInitiated = called);
+    }
   }
 
-  // دالة إجراء الاتصال
-  Future<void> _makePhoneCall(String phone) async {
+  // دالة إجراء الاتصال — returns whether dialer launch succeeded.
+  Future<bool> _makePhoneCall(String phone) async {
     final Uri url = Uri(scheme: 'tel', path: phone);
     try {
       if (await canLaunchUrl(url)) {
         await launchUrl(url);
-      } else {
-        await launchUrl(url, mode: LaunchMode.externalApplication);
+        return true;
       }
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+      return true;
     } catch (_) {
-      // التعامل بهدوء مع بيئات المحاكي
+      return false;
     }
   }
 
-  // دالة إرسال الموقع برسالة نصية
+  // دالة إرسال الموقع برسالة نصية — never invent city coordinates.
   Future<void> _sendLocationSms(String phone) async {
     const String message =
-        'نداء طوارئ عاجل من تطبيق يسر! الرجاء المساعدة، موقعي الجغرافي الحالي: https://maps.google.com/?q=24.7136,46.6753';
+        'نداء طوارئ عاجل من تطبيق يسر! الرجاء المساعدة. (لم تُرفق إحداثيات GPS — غير متوفرة حالياً)';
     final Uri url = Uri(
       scheme: 'sms',
       path: phone,

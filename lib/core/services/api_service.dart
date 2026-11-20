@@ -812,7 +812,16 @@ class ApiService {
     int? elderlyId,
   }) async {
     final finalType = deviceType ?? type ?? deviceName ?? 'ساعة ذكية';
-    final finalNumber = number ?? deviceName ?? 'YS-WATCH-1';
+    // Never invent YS-* serials — require a real number from the caller.
+    final finalNumber = (number ?? deviceName ?? '').trim();
+    if (finalNumber.isEmpty) {
+      return {
+        'status': 'error',
+        'success': false,
+        'message': 'الرقم التعريفي للجهاز مطلوب',
+        'error_type': 'validation',
+      };
+    }
     final res = await _sendRequest({
       'action': 'add_device',
       'D_Type': finalType,

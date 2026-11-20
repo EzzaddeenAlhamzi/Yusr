@@ -104,6 +104,8 @@ class LegacyBridgeController extends Controller
                 return $this->appointment->index($request);
             case 'add_appointment':
                 return $this->appointment->store($request);
+            case 'update_appointment':
+                return $this->appointment->update($request);
             case 'delete_appointment':
                 return $this->appointment->destroy(null, $request);
 

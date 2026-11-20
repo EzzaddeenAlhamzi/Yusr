@@ -746,6 +746,26 @@ class ApiService {
     });
   }
 
+  /// تحديث موعد موجود (نفس Appointment_ID — لا حذف وإعادة إنشاء)
+  Future<Map<String, dynamic>> updateAppointment({
+    required int appointmentId,
+    required String date,
+    required String time,
+    required String dateType,
+    required String location,
+    String note = '',
+  }) async {
+    return _sendRequest({
+      'action': 'update_appointment',
+      'Appointment_ID': appointmentId,
+      'A_Date': date,
+      'A_Time': time,
+      'A_DateType': dateType,
+      'A_Location': location,
+      'A_Note': note,
+    });
+  }
+
   /// حذف موعد من قاعدة البيانات
   Future<Map<String, dynamic>> deleteAppointment(int appointmentId) async {
     return _sendRequest({

@@ -8,6 +8,7 @@ class AppointmentItem {
   final String time;
   final String? date;
   final String? notes;
+  final String? location;
   final Widget? iconWidget;
 
   AppointmentItem({
@@ -17,6 +18,7 @@ class AppointmentItem {
     required this.time,
     this.date,
     this.notes,
+    this.location,
     this.iconWidget,
   }) : id = id ?? DateTime.now().millisecondsSinceEpoch.toString();
 
@@ -28,6 +30,7 @@ class AppointmentItem {
       time: map['time'] ?? '12:00',
       date: map['date']?.toString(),
       notes: map['notes']?.toString(),
+      location: map['location']?.toString(),
     );
   }
 
@@ -46,6 +49,7 @@ class AppointmentItem {
     String? time,
     String? date,
     String? notes,
+    String? location,
     Widget? iconWidget,
   }) {
     return AppointmentItem(
@@ -55,6 +59,7 @@ class AppointmentItem {
       time: time ?? this.time,
       date: date ?? this.date,
       notes: notes ?? this.notes,
+      location: location ?? this.location,
       iconWidget: iconWidget ?? this.iconWidget,
     );
   }

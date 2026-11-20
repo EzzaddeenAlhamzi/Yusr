@@ -69,6 +69,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // المواعيد
     Route::get('/appointments', [AppointmentController::class, 'index']);
     Route::post('/appointments', [AppointmentController::class, 'store']);
+    Route::match(['put', 'post'], '/appointments/{id?}', [AppointmentController::class, 'update']);
     Route::match(['delete', 'post'], '/appointments/{id?}/delete', [AppointmentController::class, 'destroy']);
 
     // القياسات الصحية والتنبيهات

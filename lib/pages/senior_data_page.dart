@@ -939,7 +939,11 @@ class _SeniorDataPageState extends State<SeniorDataPage> {
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      senior.pairingCode,
+                      (senior.pairingCode.isEmpty ||
+                              senior.pairingCode == '——' ||
+                              senior.pairingCode == '------')
+                          ? 'غير متوفر'
+                          : senior.pairingCode,
                       style: GoogleFonts.cairo(
                         fontSize: 13,
                         fontWeight: FontWeight.bold,
@@ -955,11 +959,24 @@ class _SeniorDataPageState extends State<SeniorDataPage> {
                   icon: const Icon(Icons.copy, size: 17, color: AppColors.mainColor),
                   tooltip: 'نسخ الرمز',
                   onPressed: () {
-                    Clipboard.setData(ClipboardData(text: senior.pairingCode));
+                    final code = senior.pairingCode;
+                    if (code.isEmpty || code == '——' || code == '------') {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'لا يوجد رمز اقتران متاح للنسخ (غير متوفر من الخادم).',
+                            style: GoogleFonts.cairo(),
+                          ),
+                          backgroundColor: Colors.orange.shade800,
+                        ),
+                      );
+                      return;
+                    }
+                    Clipboard.setData(ClipboardData(text: code));
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text(
-                          'تم نسخ رمز الاقتران: ${senior.pairingCode}',
+                          'تم نسخ رمز الاقتران: $code',
                           style: GoogleFonts.cairo(),
                         ),
                         duration: const Duration(seconds: 2),
@@ -1181,16 +1198,15 @@ class _SeniorDataPageState extends State<SeniorDataPage> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.mainColor),
             onPressed: () {
-              final updated = senior.copyWith(
-                watchModel: modelController.text.trim(),
-                pairingCode: codeController.text.trim(),
-              );
-              SeniorManager().updateSenior(senior.id, updated);
+              // Watch pairing fields are not persisted by update_elderly API.
               Navigator.pop(ctx);
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text('تم تحديث بيانات الساعة بنجاح!', style: GoogleFonts.cairo()),
-                  backgroundColor: AppColors.mainColor,
+                  content: Text(
+                    'بيانات الساعة غير قابلة للمزامنة مع الخادم حالياً (مؤجّل). استخدم شاشة الأجهزة لتسجيل جهاز.',
+                    style: GoogleFonts.cairo(),
+                  ),
+                  backgroundColor: Colors.orange.shade800,
                 ),
               );
             },
@@ -1341,7 +1357,7 @@ class _SeniorDataPageState extends State<SeniorDataPage> {
                   backgroundColor: AppColors.mainColor,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 ),
-                onPressed: () {
+                onPressed: () async {
                   final updated = senior.copyWith(
                     name: nameController.text.trim(),
                     phoneNumber: phoneController.text.trim(),
@@ -1351,12 +1367,18 @@ class _SeniorDataPageState extends State<SeniorDataPage> {
                     location: locationController.text.trim(),
                     doctorName: doctorController.text.trim(),
                   );
-                  SeniorManager().updateSenior(senior.id, updated);
+                  final ok = await SeniorManager().updateSenior(senior.id, updated);
+                  if (!ctx.mounted) return;
                   Navigator.pop(ctx);
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('تم تحديث البيانات بنجاح', style: GoogleFonts.cairo()),
-                      backgroundColor: AppColors.mainColor,
+                      content: Text(
+                        ok
+                            ? 'تم تحديث البيانات بنجاح'
+                            : 'تعذّر حفظ التعديلات على الخادم',
+                        style: GoogleFonts.cairo(),
+                      ),
+                      backgroundColor: ok ? AppColors.mainColor : Colors.red.shade700,
                     ),
                   );
                 },

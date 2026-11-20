@@ -46,6 +46,19 @@ class _MedicinesPageState extends State<MedicinesPage> {
       final int? seniorId = int.tryParse(senior.id);
       final list =
           await ApiService.instance.getMedications(elderlyId: seniorId);
+      final listErr = ApiService.lastListError;
+      if (list.isEmpty && listErr != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              listErr,
+              style: const TextStyle(fontFamily: 'Cairo'),
+            ),
+            backgroundColor: Colors.red.shade700,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
       final prefs = await SharedPreferences.getInstance();
       final today = _todayKey();
       final now = DateTime.now();

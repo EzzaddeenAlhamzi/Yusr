@@ -198,39 +198,38 @@ class SeniorManager extends ChangeNotifier {
     }
   }
 
-  Future<void> addSenior(SeniorModel senior) async {
-    _seniors.add(senior);
-    _selectedSeniorIndex = _seniors.length - 1;
-    notifyListeners();
-
-    // حفظ في قاعدة البيانات
-    try {
-      await ApiService.instance.registerElderly(
-        name: senior.name,
-        sex: senior.gender,
-        phone: senior.phoneNumber,
-      );
-      await fetchSeniorsFromDatabase();
-    } catch (_) {}
+  /// Local-only add without API is dishonest. Prefer `/link-senior`.
+  /// Returns false and does not mutate the list — callers must use linking.
+  Future<bool> addSenior(SeniorModel senior) async {
+    // registerElderly requires password — never invent a local "linked" senior.
+    return false;
   }
 
-  Future<void> updateSenior(String id, SeniorModel updatedSenior) async {
-    final index = _seniors.indexWhere((s) => s.id == id);
-    if (index != -1) {
-      _seniors[index] = updatedSenior;
-      notifyListeners();
-    }
-
+  /// Updates local cache after a successful API persist.
+  /// Returns false when the server update fails (local list unchanged on API fail).
+  Future<bool> updateSenior(String id, SeniorModel updatedSenior) async {
     final intId = int.tryParse(id);
-    if (intId != null) {
-      try {
-        await ApiService.instance.updateElderly(
-          elderlyId: intId,
-          name: updatedSenior.name,
-          sex: updatedSenior.gender,
-          phone: updatedSenior.phoneNumber,
-        );
-      } catch (_) {}
+    if (intId == null) {
+      return false;
+    }
+    try {
+      final res = await ApiService.instance.updateElderly(
+        elderlyId: intId,
+        name: updatedSenior.name,
+        sex: updatedSenior.gender,
+        phone: updatedSenior.phoneNumber,
+      );
+      if (res['status'] != 'success') {
+        return false;
+      }
+      final index = _seniors.indexWhere((s) => s.id == id);
+      if (index != -1) {
+        _seniors[index] = updatedSenior;
+        notifyListeners();
+      }
+      return true;
+    } catch (_) {
+      return false;
     }
   }
 

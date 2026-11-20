@@ -664,7 +664,7 @@ class _HealthPageState extends State<HealthPage> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
-                    hr != null ? 'الحالة: ${_healthRecord?['H_Result'] ?? 'طبيعي ومستقر'} ❤️' : 'لا توجد قراءات حديثة مسجلة',
+                    hr != null ? 'الحالة: ${_healthRecord?['H_Result'] ?? 'مسجّل'} ❤️' : 'لا توجد قراءات حديثة مسجلة',
                     style: GoogleFonts.tajawal(fontSize: 16, fontWeight: FontWeight.bold, color: const Color(0xFFB71C1C)),
                   ),
                 ),
@@ -782,7 +782,7 @@ class _HealthPageState extends State<HealthPage> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
-                    bp != null ? 'ضغط دم مسجل ومستقر 👍' : 'لا توجد قراءات ضغط دم مسجلة',
+                    bp != null ? 'ضغط دم مسجّل' : 'لا توجد قراءات ضغط دم مسجلة',
                     style: GoogleFonts.tajawal(fontSize: 16, fontWeight: FontWeight.bold, color: const Color(0xFFB71C1C)),
                   ),
                 ),
@@ -980,7 +980,7 @@ class _HealthPageState extends State<HealthPage> {
                                 _buildInteractiveHealthCard(
                                   title: 'ضغط الدم',
                                   value: _healthRecord?['Blood_pressure']?.toString() ?? '--/--',
-                                  status: _healthRecord?['Blood_pressure'] != null ? 'مسجل ومستقر' : 'غير مسجل',
+                                  status: _healthRecord?['Blood_pressure'] != null ? 'مسجّل' : 'غير مسجل',
                                   iconWidget: const Icon(Icons.water_drop_rounded, color: Color(0xFFB71C1C), size: 44),
                                   onTap: _showBloodPressureBottomSheet,
                                 ),
@@ -1039,11 +1039,11 @@ class _HealthPageState extends State<HealthPage> {
                                   onTap: _showWeightBottomSheet,
                                 ),
 
-                                // 8. الراحة النفسية
+                                // 8. الراحة النفسية — no API field; never invent "مستقر".
                                 _buildInteractiveHealthCard(
                                   title: 'الراحة النفسية',
-                                  value: 'مستقر',
-                                  status: 'لا يوجد إجهاد',
+                                  value: 'غير متوفر',
+                                  status: 'لا توجد قراءة من الخادم',
                                   iconWidget: const Icon(Icons.sentiment_very_satisfied_rounded, color: Color(0xFF8E24AA), size: 44),
                                   onTap: _showWellnessBottomSheet,
                                 ),

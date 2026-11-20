@@ -244,7 +244,7 @@ class _HealthStatusPageState extends State<HealthStatusPage> {
                         time: _latestRecord?['H_Date']?.toString() ?? 'لا توجد قراءات',
                         icon: Icons.bar_chart,
                         iconColor: const Color(0xFF0288D1),
-                        statusTag: _latestRecord?['Oxyger'] != null ? 'مستقر' : 'غير متوفر',
+                        statusTag: _latestRecord?['Oxyger'] != null ? 'مسجّل' : 'غير متوفر',
                       ),
                       _buildMetricCard(
                         title: 'درجة الحرارة',

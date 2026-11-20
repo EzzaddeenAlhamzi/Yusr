@@ -1416,20 +1416,40 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                     ),
                   ),
                   onPressed: () async {
+                    bool ok = false;
+                    String? errMsg;
                     try {
                       final senior = SeniorManager().currentSenior;
                       final int? seniorId = int.tryParse(senior.id);
-                      await ApiService.instance.addMedication(
+                      final res = await ApiService.instance.addMedication(
                         name: (result['name'] ?? 'دواء').toString(),
                         dose: (result['dosage'] ?? '1 حبة').toString(),
                         repeatTime: (result['timing'] ?? 'كل يوم').toString(),
                         elderlyId: seniorId,
                       );
-                    } catch (_) {}
-                    if (context.mounted) {
-                      Navigator.pop(context);
-                      Navigator.pop(context, result);
+                      ok = res['status'] == 'success' || res['success'] == true;
+                      if (!ok) {
+                        errMsg = (res['message'] ?? 'فشل حفظ الدواء على الخادم').toString();
+                      }
+                    } catch (e) {
+                      ok = false;
+                      errMsg = 'تعذّر حفظ الدواء: $e';
                     }
+                    if (!context.mounted) return;
+                    if (!ok) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            errMsg ?? 'فشل حفظ الدواء',
+                            style: GoogleFonts.tajawal(),
+                          ),
+                          backgroundColor: Colors.red.shade700,
+                        ),
+                      );
+                      return;
+                    }
+                    Navigator.pop(context);
+                    Navigator.pop(context, result);
                   },
                   child: Text(
                     'موافق',

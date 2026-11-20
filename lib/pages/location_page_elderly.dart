@@ -101,19 +101,49 @@ class _LocationPageElderlyState extends State<LocationPageElderly> {
     if (_latitude != null && _longitude != null) {
       _locationName = '${_latitude!.toStringAsFixed(4)}, ${_longitude!.toStringAsFixed(4)}';
     } else {
-      _locationName = 'تم تفعيل الموقع وتحديث الإحداثيات';
+      _locationName = 'تعذّر تحديد الموقع';
     }
   }
 
   Future<void> _shareLocation() async {
-    final lat = _latitude ?? 15.3694;
-    final lng = _longitude ?? 44.1910;
+    final lat = _latitude;
+    final lng = _longitude;
+    if (lat == null || lng == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'تعذّر مشاركة الموقع: لا توجد إحداثيات متاحة حالياً.',
+              style: GoogleFonts.tajawal(),
+            ),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+      return;
+    }
     final url = Uri.parse('https://maps.google.com/?q=$lat,$lng');
     try {
       if (await canLaunchUrl(url)) {
         await launchUrl(url, mode: LaunchMode.externalApplication);
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تعذّر فتح تطبيق الخرائط.', style: GoogleFonts.tajawal()),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
       }
-    } catch (_) {}
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تعذّر مشاركة الموقع.', style: GoogleFonts.tajawal()),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+    }
   }
 
   @override

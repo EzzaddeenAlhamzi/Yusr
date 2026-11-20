@@ -17,7 +17,6 @@ class _DevicesPageState extends State<DevicesPage> {
   Map<String, dynamic>? _selectedDevice;
   bool _isConnected = true;
   bool _isReconnecting = false;
-  final int _batteryLevel = 85;
 
   List<Map<String, dynamic>> _dbDevices = [];
   bool _isLoadingDevices = false;
@@ -32,11 +31,24 @@ class _DevicesPageState extends State<DevicesPage> {
     setState(() => _isLoadingDevices = true);
     try {
       final list = await ApiService.instance.getDevices();
+      final listErr = ApiService.lastListError;
       if (mounted) {
         setState(() {
           _dbDevices = list;
           _isLoadingDevices = false;
         });
+        if (list.isEmpty && listErr != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                listErr,
+                style: const TextStyle(fontFamily: 'Cairo'),
+              ),
+              backgroundColor: Colors.red.shade700,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
       }
     } catch (_) {
       if (mounted) {
@@ -234,8 +246,10 @@ class _DevicesPageState extends State<DevicesPage> {
     for (final dev in _dbDevices) {
       final elderlyId = dev['Elderly_ID']?.toString();
       final devType = (dev['D_Type'] ?? 'ساعة ذكية').toString();
-      final devNum = (dev['T_Number'] ?? 'YS-DEV-1').toString();
+      final rawNum = (dev['T_Number'] ?? '').toString().trim();
+      final devNum = rawNum.isNotEmpty ? rawNum : 'غير محدد';
       final devId = dev['Devices_ID'];
+      final rawStatus = (dev['D_Status'] ?? '').toString().trim();
 
       // إيجاد كبير السن المعني
       String seniorName = 'كبير السن';
@@ -251,37 +265,43 @@ class _DevicesPageState extends State<DevicesPage> {
       combinedDevices.add({
         'id': 'db_dev_$devId',
         'dbDeviceId': devId,
-        'name': devNum.isNotEmpty && !devNum.startsWith('YS-') ? devNum : '$devType ($seniorName)',
+        'name': rawNum.isNotEmpty ? '$devType ($rawNum)' : '$devType ($seniorName)',
         'type': devType,
         'serial': devNum,
         'seniorName': seniorName,
         'relationship': rel,
         'seniorId': elderlyId,
-        'battery': 85,
-        'status': 'متصل ونشط',
-        'lastSync': 'الآن',
-        'wearStatus': devType.contains('ساعة') || devType.contains('سوار') ? 'ملبوس على المعصم' : 'جاهز للقياس',
+        // Battery % is not stored in devices table — never invent 85.
+        'battery': null,
+        'status': rawStatus.isNotEmpty ? rawStatus : 'مسجّل',
+        'lastSync': 'غير متوفر',
+        'wearStatus': 'غير متوفر',
         'hasWatch': true,
       });
     }
 
-    // إذا لم تكن هناك أجهزة مسجلة في قاعدة البيانات وكان لدى كبير السن الحالي ساعة افتراضية
+    // Fallback: show linked senior watch metadata only when real model exists.
+    // Never invent battery %, pairing YS-* codes, or "connected now".
     if (combinedDevices.isEmpty) {
       for (final s in seniors) {
-        if (s.watchConnected && s.watchModel.isNotEmpty && s.watchModel != 'غير مقترنة') {
+        if (s.watchModel.isNotEmpty &&
+            s.watchModel != 'غير مقترنة' &&
+            s.watchModel != '——') {
           combinedDevices.add({
             'id': 'senior_watch_${s.id}',
             'dbDeviceId': null,
             'name': 'ساعة ${s.relationship} (${s.name.split(' ').first})',
             'type': s.watchModel,
-            'serial': s.pairingCode,
+            'serial': (s.pairingCode.isNotEmpty && s.pairingCode != '——')
+                ? s.pairingCode
+                : 'غير محدد',
             'seniorName': s.name,
             'relationship': s.relationship,
             'seniorId': s.id,
-            'battery': s.watchBattery > 0 ? s.watchBattery : 85,
-            'status': 'متصلة ونشطة',
-            'lastSync': 'الآن',
-            'wearStatus': 'ملبوسة على المعصم',
+            'battery': s.watchBattery > 0 ? s.watchBattery : null,
+            'status': s.watchConnected ? 'متصلة' : 'غير متأكد',
+            'lastSync': 'غير متوفر',
+            'wearStatus': 'غير متوفر',
             'hasWatch': true,
           });
         }
@@ -432,7 +452,7 @@ class _DevicesPageState extends State<DevicesPage> {
     final String type = device['type'] ?? 'ساعة ذكية';
     final IconData icon = _getDeviceIcon(type);
     final Color color = _getDeviceColor(type);
-    final int battery = (device['battery'] as int?) ?? 85;
+    final int? battery = device['battery'] as int?;
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -511,29 +531,41 @@ class _DevicesPageState extends State<DevicesPage> {
                     ],
                   ),
                 ),
-                // نسبة البطارية
+                // نسبة البطارية — فقط عند توفر قيمة حقيقية
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: battery > 20
+                    color: battery != null && battery > 20
                         ? const Color(0xFFE8F5E9)
-                        : const Color(0xFFFFEBEE),
+                        : const Color(0xFFF5F5F5),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Row(
                     children: [
                       Icon(
-                        battery > 20 ? Icons.battery_charging_full : Icons.battery_alert,
+                        battery == null
+                            ? Icons.battery_unknown
+                            : (battery > 20
+                                ? Icons.battery_charging_full
+                                : Icons.battery_alert),
                         size: 14,
-                        color: battery > 20 ? const Color(0xFF2E7D32) : const Color(0xFFD32F2F),
+                        color: battery == null
+                            ? AppColors.textSecondary
+                            : (battery > 20
+                                ? const Color(0xFF2E7D32)
+                                : const Color(0xFFD32F2F)),
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        '$battery%',
+                        battery == null ? '—' : '$battery%',
                         style: GoogleFonts.cairo(
                           fontSize: 12,
                           fontWeight: FontWeight.bold,
-                          color: battery > 20 ? const Color(0xFF2E7D32) : const Color(0xFFD32F2F),
+                          color: battery == null
+                              ? AppColors.textSecondary
+                              : (battery > 20
+                                  ? const Color(0xFF2E7D32)
+                                  : const Color(0xFFD32F2F)),
                         ),
                       ),
                     ],
@@ -549,24 +581,24 @@ class _DevicesPageState extends State<DevicesPage> {
               children: [
                 Row(
                   children: [
-                    const Icon(
-                      Icons.check_circle,
+                    Icon(
+                      Icons.info_outline,
                       size: 14,
-                      color: Color(0xFF2E7D32),
+                      color: AppColors.textSecondary,
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      device['status'] as String,
+                      device['status'] as String? ?? 'غير متوفر',
                       style: GoogleFonts.cairo(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
-                        color: const Color(0xFF2E7D32),
+                        color: AppColors.textSecondary,
                       ),
                     ),
                   ],
                 ),
                 Text(
-                  'الكود: ${device['serial'] ?? 'YS-DEV'}',
+                  'الكود: ${device['serial'] ?? 'غير محدد'}',
                   style: GoogleFonts.cairo(
                     fontSize: 11,
                     color: AppColors.textSecondary,
@@ -625,7 +657,7 @@ class _DevicesPageState extends State<DevicesPage> {
           textAlign: TextAlign.center,
         ),
         Text(
-          'النوع: $type | المعرف: ${dev['serial'] ?? 'YS-DEV'}',
+          'النوع: $type | المعرف: ${dev['serial'] ?? 'غير محدد'}',
           style: GoogleFonts.cairo(
             fontSize: 13,
             color: AppColors.textSecondary,
@@ -719,17 +751,17 @@ class _DevicesPageState extends State<DevicesPage> {
                 ),
               ),
               const SizedBox(height: 10),
-              _buildDetailRow(Icons.person_pin_circle_outlined, 'كبير السن المستخدم', dev['seniorName'] ?? 'محمد عبدالله'),
+              _buildDetailRow(Icons.person_pin_circle_outlined, 'كبير السن المستخدم', dev['seniorName'] ?? 'غير محدد'),
               const Divider(height: 16, color: AppColors.cardBorderColor),
               _buildDetailRow(Icons.category_outlined, 'نوع الجهاز', type),
               const Divider(height: 16, color: AppColors.cardBorderColor),
-              _buildDetailRow(Icons.fingerprint, 'الرقم التسلسلي / الكود', dev['serial'] ?? 'YS-DEV-1'),
+              _buildDetailRow(Icons.fingerprint, 'الرقم التسلسلي / الكود', (dev['serial'] as String?)?.isNotEmpty == true ? dev['serial'] as String : 'غير محدد'),
               const Divider(height: 16, color: AppColors.cardBorderColor),
-              _buildDetailRow(Icons.battery_std, 'مستوى شحن البطارية', '${dev['battery'] ?? _batteryLevel}%'),
+              _buildDetailRow(Icons.battery_std, 'مستوى شحن البطارية', dev['battery'] != null ? '${dev['battery']}%' : 'غير متوفر'),
               const Divider(height: 16, color: AppColors.cardBorderColor),
-              _buildDetailRow(Icons.wifi, 'نوع الاتصال والشبكة', 'Bluetooth BLE + Wi-Fi'),
+              _buildDetailRow(Icons.wifi, 'نوع الاتصال والشبكة', 'غير متوفر'),
               const Divider(height: 16, color: AppColors.cardBorderColor),
-              _buildDetailRow(Icons.sync, 'حالة المزامنة مع قاعدة البيانات', 'متزامن بنجاح عبر MySQL'),
+              _buildDetailRow(Icons.sync, 'حالة المزامنة مع قاعدة البيانات', 'غير متوفر'),
             ],
           ),
         ),
@@ -991,9 +1023,8 @@ class _DevicesPageState extends State<DevicesPage> {
 
         String selectedType = 'ساعة ذكية';
         final nameController = TextEditingController(text: 'ساعة Yusr Smart Watch v3');
-        final serialController = TextEditingController(
-          text: 'YS-${DateTime.now().millisecondsSinceEpoch % 10000}',
-        );
+        // Empty serial — user must enter a real identifier (never invent YS-*).
+        final serialController = TextEditingController();
         bool isSaving = false;
 
         return StatefulBuilder(
@@ -1161,9 +1192,19 @@ class _DevicesPageState extends State<DevicesPage> {
                             if (elderlyId == null) return;
 
                             final devName = nameController.text.trim().isEmpty ? selectedType : nameController.text.trim();
-                            final serialNum = serialController.text.trim().isEmpty
-                                ? 'YS-${DateTime.now().millisecondsSinceEpoch % 10000}'
-                                : serialController.text.trim();
+                            final serialNum = serialController.text.trim();
+                            if (serialNum.isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'أدخل الرقم التعريفي للجهاز. لا يتم إنشاء رمز تلقائي.',
+                                    style: GoogleFonts.cairo(),
+                                  ),
+                                  backgroundColor: Colors.red.shade700,
+                                ),
+                              );
+                              return;
+                            }
 
                             setDialogState(() => isSaving = true);
 

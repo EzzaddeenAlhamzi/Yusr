@@ -61,6 +61,7 @@ class _DatesScreenState extends State<DatesScreen> {
           time: timeFormatted,
           date: a['A_Date']?.toString(),
           notes: a['A_Note']?.toString(),
+          location: a['A_Location']?.toString(),
         ));
       }
       if (mounted) {
@@ -218,182 +219,399 @@ class _DatesScreenState extends State<DatesScreen> {
     );
   }
 
-  // دالة تعديل الموعد
+  static bool _isValidAppointmentDate(String raw) {
+    final text = raw.trim();
+    final match = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(text);
+    if (match == null) return false;
+    final year = int.tryParse(match.group(1)!);
+    final month = int.tryParse(match.group(2)!);
+    final day = int.tryParse(match.group(3)!);
+    if (year == null || month == null || day == null) return false;
+    final dt = DateTime.tryParse(text);
+    if (dt == null) return false;
+    return dt.year == year && dt.month == month && dt.day == day;
+  }
+
+  static String _normalizeAppointmentTime(String raw) {
+    final t = raw.trim();
+    if (t.isEmpty) return '09:00:00';
+    if (RegExp(r'^\d{2}:\d{2}:\d{2}$').hasMatch(t)) return t;
+    if (RegExp(r'^\d{2}:\d{2}$').hasMatch(t)) return '$t:00';
+    return t;
+  }
+
+  // دالة تعديل الموعد — تحديث على الخادم بنفس Appointment_ID
   void _editAppointment(int index) {
     final item = _appointments[index];
+    final appointmentId = int.tryParse(item.id);
     final titleController = TextEditingController(text: item.title);
-    final dayController = TextEditingController(text: item.day);
+    final dayController = TextEditingController(
+      text: (item.date ?? item.day).toString(),
+    );
     final timeController = TextEditingController(text: item.time);
+    final locationController =
+        TextEditingController(text: item.location ?? '');
+    final notesController = TextEditingController(text: item.notes ?? '');
+    final pageMessenger = ScaffoldMessenger.of(context);
+    var isSaving = false;
+    // Shown inside the dialog so invalid-date feedback stays visible above the
+    // modal (page SnackBar alone can sit behind the barrier / IME).
+    var dateError = '';
 
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: cardColor,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(24),
-          side: const BorderSide(color: cardBorderColor, width: 1.4),
-        ),
-        title: Text(
-          'تعديل الموعد',
-          textAlign: TextAlign.center,
-          style: GoogleFonts.tajawal(
-            color: appbarColor,
-            fontSize: 26,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        content: SizedBox(
-          width: MediaQuery.of(ctx).size.width * 0.92,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: titleController,
-                  textAlign: TextAlign.right,
-                  style: GoogleFonts.tajawal(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.black87,
-                  ),
-                  decoration: InputDecoration(
-                    labelText: 'اسم الزيارة',
-                    labelStyle: GoogleFonts.tajawal(
-                      color: appbarColor,
-                      fontSize: 19,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    hintText: 'مثال: موعد مشفى',
-                    hintStyle: GoogleFonts.tajawal(fontSize: 18),
-                    filled: true,
-                    fillColor: backgroundColor,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: const BorderSide(color: cardBorderColor),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: const BorderSide(color: appbarColor, width: 2),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: dayController,
-                  textAlign: TextAlign.right,
-                  style: GoogleFonts.tajawal(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.black87,
-                  ),
-                  decoration: InputDecoration(
-                    labelText: 'يوم الزيارة',
-                    labelStyle: GoogleFonts.tajawal(
-                      color: iconColor,
-                      fontSize: 19,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    hintText: 'مثال: يوم الأحد',
-                    hintStyle: GoogleFonts.tajawal(fontSize: 18),
-                    filled: true,
-                    fillColor: backgroundColor,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: const BorderSide(color: cardBorderColor),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: const BorderSide(color: iconColor, width: 2),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: timeController,
-                  textAlign: TextAlign.right,
-                  style: GoogleFonts.tajawal(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.black87,
-                  ),
-                  decoration: InputDecoration(
-                    labelText: 'ساعة الزيارة',
-                    labelStyle: GoogleFonts.tajawal(
-                      color: const Color(0xFF526E7A),
-                      fontSize: 19,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    hintText: 'مثال: الساعة 9 صباحاً',
-                    hintStyle: GoogleFonts.tajawal(fontSize: 18),
-                    filled: true,
-                    fillColor: backgroundColor,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: const BorderSide(color: cardBorderColor),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: const BorderSide(color: Color(0xFF526E7A), width: 2),
-                    ),
-                  ),
-                ),
-              ],
+      builder: (ctx) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          return AlertDialog(
+            backgroundColor: cardColor,
+            insetPadding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+              side: const BorderSide(color: cardBorderColor, width: 1.4),
             ),
-          ),
-        ),
-        actionsPadding: const EdgeInsets.only(bottom: 20, left: 16, right: 16),
-        actionsAlignment: MainAxisAlignment.spaceEvenly,
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            ),
-            child: Text(
-              'إلغاء',
+            title: Text(
+              'تعديل الموعد',
+              textAlign: TextAlign.center,
               style: GoogleFonts.tajawal(
-                color: Colors.grey[700],
-                fontSize: 20,
+                color: appbarColor,
+                fontSize: 26,
                 fontWeight: FontWeight.bold,
               ),
             ),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: appbarColor,
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-            ),
-            onPressed: () {
-              // No appointment UPDATE route in Laravel API yet — do not fake success.
-              Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    'تعديل الموعد على الخادم غير متاح حالياً. احذف الموعد وأضفه من جديد.',
-                    style: GoogleFonts.tajawal(fontSize: 16),
-                  ),
-                  backgroundColor: Colors.orange.shade800,
-                  duration: const Duration(seconds: 4),
+            content: SizedBox(
+              width: MediaQuery.of(ctx).size.width * 0.92,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: titleController,
+                      textAlign: TextAlign.right,
+                      enabled: !isSaving,
+                      style: GoogleFonts.tajawal(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87,
+                      ),
+                      decoration: InputDecoration(
+                        labelText: 'اسم الزيارة',
+                        labelStyle: GoogleFonts.tajawal(
+                          color: appbarColor,
+                          fontSize: 19,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        hintText: 'مثال: موعد مشفى',
+                        hintStyle: GoogleFonts.tajawal(fontSize: 18),
+                        filled: true,
+                        fillColor: backgroundColor,
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 14),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: const BorderSide(color: cardBorderColor),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide:
+                              const BorderSide(color: appbarColor, width: 2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: dayController,
+                      textAlign: TextAlign.right,
+                      enabled: !isSaving,
+                      style: GoogleFonts.tajawal(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87,
+                      ),
+                      onChanged: (_) {
+                        if (dateError.isNotEmpty) {
+                          setDialogState(() => dateError = '');
+                        }
+                      },
+                      decoration: InputDecoration(
+                        labelText: 'تاريخ الزيارة (YYYY-MM-DD)',
+                        labelStyle: GoogleFonts.tajawal(
+                          color: iconColor,
+                          fontSize: 19,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        hintText: 'مثال: 2026-12-20',
+                        hintStyle: GoogleFonts.tajawal(fontSize: 18),
+                        filled: true,
+                        fillColor: backgroundColor,
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 14),
+                        errorText: dateError.isEmpty ? null : dateError,
+                        errorMaxLines: 3,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: const BorderSide(color: cardBorderColor),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide:
+                              const BorderSide(color: iconColor, width: 2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: timeController,
+                      textAlign: TextAlign.right,
+                      enabled: !isSaving,
+                      style: GoogleFonts.tajawal(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87,
+                      ),
+                      decoration: InputDecoration(
+                        labelText: 'ساعة الزيارة (HH:MM)',
+                        labelStyle: GoogleFonts.tajawal(
+                          color: const Color(0xFF526E7A),
+                          fontSize: 19,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        hintText: 'مثال: 09:00',
+                        hintStyle: GoogleFonts.tajawal(fontSize: 18),
+                        filled: true,
+                        fillColor: backgroundColor,
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 14),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: const BorderSide(color: cardBorderColor),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: const BorderSide(
+                              color: Color(0xFF526E7A), width: 2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: locationController,
+                      textAlign: TextAlign.right,
+                      enabled: !isSaving,
+                      style: GoogleFonts.tajawal(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87,
+                      ),
+                      decoration: InputDecoration(
+                        labelText: 'المكان',
+                        labelStyle: GoogleFonts.tajawal(
+                          color: appbarColor,
+                          fontSize: 19,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        hintText: 'مثال: المستشفى',
+                        hintStyle: GoogleFonts.tajawal(fontSize: 18),
+                        filled: true,
+                        fillColor: backgroundColor,
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 14),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: const BorderSide(color: cardBorderColor),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide:
+                              const BorderSide(color: appbarColor, width: 2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: notesController,
+                      textAlign: TextAlign.right,
+                      enabled: !isSaving,
+                      style: GoogleFonts.tajawal(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87,
+                      ),
+                      decoration: InputDecoration(
+                        labelText: 'ملاحظات',
+                        labelStyle: GoogleFonts.tajawal(
+                          color: iconColor,
+                          fontSize: 19,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        hintText: 'اختياري',
+                        hintStyle: GoogleFonts.tajawal(fontSize: 18),
+                        filled: true,
+                        fillColor: backgroundColor,
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 14),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: const BorderSide(color: cardBorderColor),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide:
+                              const BorderSide(color: iconColor, width: 2),
+                        ),
+                      ),
+                    ),
+                    if (isSaving) ...[
+                      const SizedBox(height: 16),
+                      const CircularProgressIndicator(),
+                    ],
+                  ],
                 ),
-              );
-            },
-            child: Text(
-              'حفظ التعديل',
-              style: GoogleFonts.tajawal(
-                color: Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
               ),
             ),
-          ),
-        ],
+            actionsPadding:
+                const EdgeInsets.only(bottom: 20, left: 16, right: 16),
+            actionsAlignment: MainAxisAlignment.spaceEvenly,
+            actions: [
+              TextButton(
+                onPressed: isSaving ? null : () => Navigator.pop(ctx),
+                style: TextButton.styleFrom(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                ),
+                child: Text(
+                  'إلغاء',
+                  style: GoogleFonts.tajawal(
+                    color: Colors.grey[700],
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: appbarColor,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                onPressed: isSaving
+                    ? null
+                    : () async {
+                        if (appointmentId == null) {
+                          pageMessenger.showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                'تعذّر تحديد رقم الموعد للتعديل',
+                                style: GoogleFonts.tajawal(fontSize: 16),
+                              ),
+                              backgroundColor: Colors.red.shade700,
+                            ),
+                          );
+                          return;
+                        }
+                        final dateText = dayController.text.trim();
+                        if (!_isValidAppointmentDate(dateText)) {
+                          const msg =
+                              'تاريخ الموعد غير صالح. استخدم صيغة YYYY-MM-DD صحيحة.';
+                          setDialogState(() => dateError = msg);
+                          pageMessenger.showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                msg,
+                                style: GoogleFonts.tajawal(fontSize: 16),
+                              ),
+                              backgroundColor: Colors.red.shade700,
+                            ),
+                          );
+                          return;
+                        }
+                        if (dateError.isNotEmpty) {
+                          setDialogState(() => dateError = '');
+                        }
+                        final title = titleController.text.trim();
+                        if (title.isEmpty) {
+                          pageMessenger.showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                'اسم الزيارة مطلوب',
+                                style: GoogleFonts.tajawal(fontSize: 16),
+                              ),
+                              backgroundColor: Colors.red.shade700,
+                            ),
+                          );
+                          return;
+                        }
+
+                        setDialogState(() => isSaving = true);
+                        Map<String, dynamic> res;
+                        try {
+                          res = await ApiService.instance.updateAppointment(
+                            appointmentId: appointmentId,
+                            date: dateText,
+                            time: _normalizeAppointmentTime(
+                                timeController.text),
+                            dateType: title,
+                            location: locationController.text.trim(),
+                            note: notesController.text.trim(),
+                          );
+                        } catch (_) {
+                          setDialogState(() => isSaving = false);
+                          pageMessenger.showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                'تعذّر حفظ تعديل الموعد على الخادم',
+                                style: GoogleFonts.tajawal(fontSize: 16),
+                              ),
+                              backgroundColor: Colors.red.shade700,
+                            ),
+                          );
+                          return;
+                        }
+
+                        if (res['status'] != 'success') {
+                          setDialogState(() => isSaving = false);
+                          pageMessenger.showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                (res['message']?.toString().trim().isNotEmpty ==
+                                        true)
+                                    ? res['message'].toString()
+                                    : 'تعذّر حفظ تعديل الموعد على الخادم',
+                                style: GoogleFonts.tajawal(fontSize: 16),
+                              ),
+                              backgroundColor: Colors.red.shade700,
+                            ),
+                          );
+                          return;
+                        }
+
+                        if (ctx.mounted) Navigator.pop(ctx);
+                        pageMessenger.showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'تم تحديث الموعد بنجاح',
+                              style: GoogleFonts.tajawal(fontSize: 16),
+                            ),
+                            backgroundColor: Colors.green.shade700,
+                          ),
+                        );
+                        if (mounted) await _loadAppointments();
+                      },
+                child: Text(
+                  isSaving ? 'جاري الحفظ...' : 'حفظ التعديل',
+                  style: GoogleFonts.tajawal(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

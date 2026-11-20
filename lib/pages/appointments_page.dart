@@ -1267,6 +1267,10 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
     final locationController =
         TextEditingController(text: item['location'] ?? '');
     final pageMessenger = ScaffoldMessenger.of(pageContext);
+    final appointmentId = int.tryParse(item['id']?.toString() ?? '');
+    var isSaving = false;
+    // Inline so Arabic invalid-date feedback is visible inside the modal.
+    var dateError = '';
 
     final appointmentTypes = [
       'موعد طبيب',
@@ -1337,17 +1341,25 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                                 style: GoogleFonts.cairo(fontSize: 13)),
                           );
                         }).toList(),
-                        onChanged: (v) {
-                          if (v != null) {
-                            setDialogState(() => selectedType = v);
-                          }
-                        },
+                        onChanged: isSaving
+                            ? null
+                            : (v) {
+                                if (v != null) {
+                                  setDialogState(() => selectedType = v);
+                                }
+                              },
                       ),
                       const SizedBox(height: 10),
                       TextField(
                         controller: dateController,
+                        enabled: !isSaving,
                         style: GoogleFonts.cairo(fontSize: 13),
                         textAlign: TextAlign.right,
+                        onChanged: (_) {
+                          if (dateError.isNotEmpty) {
+                            setDialogState(() => dateError = '');
+                          }
+                        },
                         decoration: InputDecoration(
                           labelText: 'تاريخ الموعد',
                           labelStyle:
@@ -1355,27 +1367,35 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                           border: const OutlineInputBorder(),
                           filled: true,
                           fillColor: Colors.white,
+                          errorText: dateError.isEmpty ? null : dateError,
+                          errorMaxLines: 3,
                           suffixIcon: IconButton(
                             icon: const Icon(Icons.calendar_today_rounded,
                                 size: 18),
-                            onPressed: () async {
-                              final d = await showDatePicker(
-                                context: context,
-                                initialDate: DateTime.now(),
-                                firstDate: DateTime(2020),
-                                lastDate: DateTime(2035),
-                              );
-                              if (d != null) {
-                                dateController.text =
-                                    '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-                              }
-                            },
+                            onPressed: isSaving
+                                ? null
+                                : () async {
+                                    final d = await showDatePicker(
+                                      context: context,
+                                      initialDate: DateTime.now(),
+                                      firstDate: DateTime(2020),
+                                      lastDate: DateTime(2035),
+                                    );
+                                    if (d != null) {
+                                      dateController.text =
+                                          '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+                                      if (dateError.isNotEmpty) {
+                                        setDialogState(() => dateError = '');
+                                      }
+                                    }
+                                  },
                           ),
                         ),
                       ),
                       const SizedBox(height: 10),
                       TextField(
                         controller: timeController,
+                        enabled: !isSaving,
                         style: GoogleFonts.cairo(fontSize: 13),
                         textAlign: TextAlign.right,
                         decoration: InputDecoration(
@@ -1388,22 +1408,25 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                           suffixIcon: IconButton(
                             icon: const Icon(Icons.access_time_rounded,
                                 size: 18),
-                            onPressed: () async {
-                              final t = await showTimePicker(
-                                context: context,
-                                initialTime: const TimeOfDay(hour: 9, minute: 0),
-                              );
-                              if (t != null) {
-                                timeController.text =
-                                    '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-                              }
-                            },
+                            onPressed: isSaving
+                                ? null
+                                : () async {
+                                    final t = await showTimePicker(
+                                      context: context,
+                                      initialTime:
+                                          const TimeOfDay(hour: 9, minute: 0),
+                                    );
+                                    if (t != null) {
+                                      timeController.text =
+                                          '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+                                    }
+                                  },
                           ),
                         ),
                       ),
                       const SizedBox(height: 10),
                       Text(
-                        'ضبط تذكير مسبق:',
+                        'ضبط تذكير مسبق (محلي فقط):',
                         style: GoogleFonts.cairo(
                             fontSize: 12, fontWeight: FontWeight.bold),
                       ),
@@ -1424,15 +1447,18 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                                 style: GoogleFonts.cairo(fontSize: 13)),
                           );
                         }).toList(),
-                        onChanged: (v) {
-                          if (v != null) {
-                            setDialogState(() => selectedAdvance = v);
-                          }
-                        },
+                        onChanged: isSaving
+                            ? null
+                            : (v) {
+                                if (v != null) {
+                                  setDialogState(() => selectedAdvance = v);
+                                }
+                              },
                       ),
                       const SizedBox(height: 10),
                       TextField(
                         controller: doctorController,
+                        enabled: !isSaving,
                         style: GoogleFonts.cairo(fontSize: 13),
                         textAlign: TextAlign.right,
                         decoration: InputDecoration(
@@ -1447,6 +1473,7 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                       const SizedBox(height: 10),
                       TextField(
                         controller: locationController,
+                        enabled: !isSaving,
                         style: GoogleFonts.cairo(fontSize: 13),
                         textAlign: TextAlign.right,
                         decoration: InputDecoration(
@@ -1458,36 +1485,136 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                           fillColor: Colors.white,
                         ),
                       ),
+                      if (isSaving) ...[
+                        const SizedBox(height: 12),
+                        const Center(child: CircularProgressIndicator()),
+                      ],
                     ],
                   ),
                 ),
                 actions: [
                   TextButton(
-                    onPressed: () => Navigator.pop(ctx),
+                    onPressed: isSaving ? null : () => Navigator.pop(ctx),
                     child: Text('إلغاء',
                         style:
                             GoogleFonts.cairo(color: AppColors.textSecondary)),
                   ),
                   ElevatedButton(
-                    onPressed: () {
-                      // No appointment UPDATE route in Laravel API yet —
-                      // do not fake success via silent delete+recreate.
-                      Navigator.pop(ctx);
-                      pageMessenger.showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            'تعديل الموعد على الخادم غير متاح حالياً. احذف الموعد وأضفه من جديد.',
-                            style: GoogleFonts.cairo(fontSize: 13),
-                          ),
-                          backgroundColor: Colors.orange.shade800,
-                          duration: const Duration(seconds: 4),
-                        ),
-                      );
-                    },
+                    onPressed: isSaving
+                        ? null
+                        : () async {
+                            if (appointmentId == null) {
+                              pageMessenger.showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'تعذّر تحديد رقم الموعد للتعديل',
+                                    style: GoogleFonts.cairo(fontSize: 13),
+                                  ),
+                                  backgroundColor: Colors.red.shade700,
+                                ),
+                              );
+                              return;
+                            }
+                            final dateText = dateController.text.trim().isEmpty
+                                ? DateTime.now()
+                                    .toIso8601String()
+                                    .split('T')
+                                    .first
+                                : dateController.text.trim();
+                            if (!_isValidAppointmentDate(dateText)) {
+                              const msg =
+                                  'تاريخ الموعد غير صالح. استخدم صيغة YYYY-MM-DD صحيحة.';
+                              setDialogState(() => dateError = msg);
+                              pageMessenger.showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    msg,
+                                    style: GoogleFonts.cairo(),
+                                  ),
+                                  backgroundColor: Colors.red.shade700,
+                                ),
+                              );
+                              return;
+                            }
+                            if (dateError.isNotEmpty) {
+                              setDialogState(() => dateError = '');
+                            }
+
+                            setDialogState(() => isSaving = true);
+                            final senior = SeniorManager().currentSenior;
+                            final int? seniorId = int.tryParse(senior.id);
+                            final timeRaw = timeController.text.trim().isEmpty
+                                ? '09:00'
+                                : timeController.text.trim();
+                            final timeNorm = timeRaw.length == 5
+                                ? '$timeRaw:00'
+                                : timeRaw;
+
+                            Map<String, dynamic> res;
+                            try {
+                              res = await ApiService.instance
+                                  .updateAppointment(
+                                appointmentId: appointmentId,
+                                date: dateText,
+                                time: timeNorm,
+                                dateType: selectedType,
+                                location: locationController.text.trim(),
+                                note: doctorController.text.trim(),
+                              );
+                            } catch (_) {
+                              setDialogState(() => isSaving = false);
+                              pageMessenger.showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'تعذّر حفظ تعديل الموعد على الخادم',
+                                    style: GoogleFonts.cairo(),
+                                  ),
+                                  backgroundColor: Colors.red.shade700,
+                                ),
+                              );
+                              return;
+                            }
+
+                            if (res['status'] != 'success') {
+                              setDialogState(() => isSaving = false);
+                              pageMessenger.showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    _appointmentErrorMessage(res),
+                                    style: GoogleFonts.cairo(),
+                                  ),
+                                  backgroundColor: Colors.red.shade700,
+                                ),
+                              );
+                              return;
+                            }
+
+                            // Local-only advance reminder preference (not P2.3).
+                            if (seniorId != null) {
+                              final prefs =
+                                  await SharedPreferences.getInstance();
+                              final remKey =
+                                  'appt_advance_rem_${seniorId}_$appointmentId';
+                              await prefs.setString(remKey, selectedAdvance);
+                            }
+
+                            if (ctx.mounted) Navigator.pop(ctx);
+                            pageMessenger.showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  'تم تحديث الموعد بنجاح',
+                                  style: GoogleFonts.cairo(fontSize: 13),
+                                ),
+                                backgroundColor: Colors.green.shade700,
+                              ),
+                            );
+                            if (mounted) await _loadAppointments();
+                          },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.mainColor,
                     ),
-                    child: Text('حفظ التعديل',
+                    child: Text(
+                        isSaving ? 'جاري الحفظ...' : 'حفظ التعديل',
                         style: GoogleFonts.cairo(
                             color: Colors.white,
                             fontWeight: FontWeight.bold)),

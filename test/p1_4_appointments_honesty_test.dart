@@ -32,30 +32,32 @@ void main() {
     });
   });
 
-  group('E appointments UPDATE deferred honesty (source contract)', () {
-    test('caregiver appointments page defers UPDATE instead of delete+add', () {
+  group('E appointments UPDATE honesty (P2.1 — real UPDATE, no fake success)', () {
+    test('caregiver appointments page uses updateAppointment (not delete+add)', () {
       final src = File('lib/pages/appointments_page.dart').readAsStringSync();
+      expect(src.contains('updateAppointment('), isTrue);
       expect(
         src.contains(
           'تعديل الموعد على الخادم غير متاح حالياً. احذف الموعد وأضفه من جديد.',
         ),
-        isTrue,
-      );
-      // Must not silently recreate on edit save.
-      expect(
-        src.contains('do not fake success via silent delete+recreate'),
-        isTrue,
+        isFalse,
       );
       expect(src.contains("res['status'] != 'success'"), isTrue);
+      final editStart = src.indexOf('void _showEditAppointmentDialog');
+      final editEnd = src.indexOf('void _confirmDeleteAppointment');
+      final editFn = src.substring(editStart, editEnd);
+      expect(editFn.contains('deleteAppointment'), isFalse);
+      expect(editFn.contains('addAppointment'), isFalse);
     });
 
-    test('elderly dates page keeps UPDATE deferred message', () {
+    test('elderly dates page uses updateAppointment (not deferred message)', () {
       final src = File('lib/pages/dates.dart').readAsStringSync();
+      expect(src.contains('updateAppointment('), isTrue);
       expect(
         src.contains(
           'تعديل الموعد على الخادم غير متاح حالياً. احذف الموعد وأضفه من جديد.',
         ),
-        isTrue,
+        isFalse,
       );
     });
   });

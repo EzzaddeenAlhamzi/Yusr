@@ -40,12 +40,16 @@ void main() {
       final src =
           File('lib/pages/medicines_page_elderly.dart').readAsStringSync();
       expect(src.contains('confirmMedicationDose'), isTrue);
-      expect(src.contains("res['status'] != 'success'"), isTrue);
+      expect(src.contains('isConfirmSuccess'), isTrue);
       expect(src.contains('تم تناول الدواء'), isTrue);
       expect(src.contains('offlineConfirmBlockedMessage'), isTrue);
       expect(src.contains('_confirmInFlight'), isTrue);
+      expect(src.contains('confirmFailureMessage'), isTrue);
       // Must not write SharedPreferences as adherence SoT.
       expect(src.contains('med_confirmed_'), isFalse);
+      // No offline pending sync queue in V1.
+      expect(src.contains('pending_sync'), isFalse);
+      expect(src.contains('offline_queue'), isFalse);
     });
 
     test('simple elderly page uses server today doses + large confirm CTA', () {
@@ -56,7 +60,72 @@ void main() {
       expect(src.contains('تم تناول الدواء'), isTrue);
       expect(src.contains('offlineConfirmBlockedMessage'), isTrue);
       expect(src.contains('_confirmInFlight'), isTrue);
-      expect(src.contains("res['status'] != 'success'"), isTrue);
+      expect(src.contains('isConfirmSuccess'), isTrue);
+      expect(src.contains('confirmFailureMessage'), isTrue);
+      expect(src.contains('pending_sync'), isFalse);
+    });
+  });
+
+  group('P2.2 offline confirm honesty regression', () {
+    test('connection failure never counts as confirm success', () {
+      final offline = <String, dynamic>{
+        'status': 'error',
+        'is_connection_error': true,
+        'error_type': 'connection_error',
+        'message': 'تعذّر الاتصال بالخادم',
+      };
+      expect(MedicationAdherenceHelper.isConfirmSuccess(offline), isFalse);
+      expect(MedicationAdherenceHelper.isConnectionFailure(offline), isTrue);
+      final msg = MedicationAdherenceHelper.confirmFailureMessage(offline);
+      expect(msg, MedicationAdherenceHelper.offlineConfirmBlockedMessage());
+      expect(msg.contains('يلزم الاتصال'), isTrue);
+      expect(msg.toLowerCase().contains('taken'), isFalse);
+      expect(msg.contains('تم التناول'), isFalse);
+      expect(msg.contains('بنجاح'), isFalse);
+    });
+
+    test('non-connection API error stays failure without inventing Taken', () {
+      final denied = <String, dynamic>{
+        'status': 'error',
+        'message': 'غير مصرح بتأكيد هذه الجرعة',
+        'http_status': 403,
+      };
+      expect(MedicationAdherenceHelper.isConfirmSuccess(denied), isFalse);
+      expect(MedicationAdherenceHelper.isConnectionFailure(denied), isFalse);
+      expect(
+        MedicationAdherenceHelper.confirmFailureMessage(denied),
+        'غير مصرح بتأكيد هذه الجرعة',
+      );
+    });
+
+    test('only explicit status success is confirm success', () {
+      expect(
+        MedicationAdherenceHelper.isConfirmSuccess(
+          {'status': 'success', 'message': 'تم تأكيد تناول الدواء بنجاح'},
+        ),
+        isTrue,
+      );
+      expect(
+        MedicationAdherenceHelper.isConfirmSuccess({'status': 'ok'}),
+        isFalse,
+      );
+      expect(MedicationAdherenceHelper.isConfirmSuccess(null), isFalse);
+      expect(MedicationAdherenceHelper.isConfirmSuccess({}), isFalse);
+    });
+
+    test('elderly + simple pages short-circuit known offline before network', () {
+      final elderly =
+          File('lib/pages/medicines_page_elderly.dart').readAsStringSync();
+      final simple =
+          File('lib/pages/simple_elderly/simple_medicines_page.dart')
+              .readAsStringSync();
+      expect(elderly.contains('if (_dosesOffline)'), isTrue);
+      expect(simple.contains('if (_offline)'), isTrue);
+      expect(elderly.contains('CircularProgressIndicator'), isTrue);
+      expect(simple.contains('CircularProgressIndicator'), isTrue);
+      // Success snackbar path must remain gated — green copy only after success helper.
+      expect(elderly.contains('تم تأكيد تناول الدواء بنجاح'), isTrue);
+      expect(simple.contains('تم تأكيد تناول الدواء بنجاح'), isTrue);
     });
   });
 

@@ -26,11 +26,24 @@ class _SimpleMedicinesPageState extends State<SimpleMedicinesPage> {
     _loadDoses();
   }
 
+  void _showConfirmFailureSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          message,
+          style: const TextStyle(fontFamily: 'Cairo', fontSize: 16),
+        ),
+        backgroundColor: Colors.red.shade700,
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
+
   Future<void> _loadDoses() async {
     setState(() {
       _isLoading = true;
       _error = null;
-      _offline = false;
     });
     try {
       final senior = SeniorManager().currentSenior;
@@ -43,28 +56,37 @@ class _SimpleMedicinesPageState extends State<SimpleMedicinesPage> {
       if (!mounted) return;
       if (res['status'] == 'success' && res['data'] is List) {
         setState(() {
+          _offline = false;
+          _error = null;
           _doses = (res['data'] as List)
               .whereType<Map>()
               .map((e) => Map<String, dynamic>.from(e))
               .toList();
         });
       } else {
-        final offline = res['is_connection_error'] == true ||
-            res['error_type'] == 'connection_error';
+        final offline = MedicationAdherenceHelper.isConnectionFailure(res);
         setState(() {
           _offline = offline;
-          _error = res['message']?.toString() ??
-              'تعذّر تحميل جرعات اليوم من الخادم';
-          _doses = [];
+          _error = offline
+              ? MedicationAdherenceHelper.offlineConfirmBlockedMessage()
+              : (res['message']?.toString() ??
+                  'تعذّر تحميل جرعات اليوم من الخادم');
+          // Keep last good doses when offline so confirm CTA can show
+          // Arabic blocked feedback instead of empty spinner-only UI.
+          if (!offline) {
+            _doses = [];
+          }
         });
       }
     } catch (_) {
       if (mounted) {
         setState(() {
           _offline = true;
-          _error = MedicationAdherenceHelper.outdatedCacheBanner();
-          _doses = [];
+          _error = MedicationAdherenceHelper.offlineConfirmBlockedMessage();
         });
+        _showConfirmFailureSnack(
+          MedicationAdherenceHelper.offlineConfirmBlockedMessage(),
+        );
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -78,11 +100,19 @@ class _SimpleMedicinesPageState extends State<SimpleMedicinesPage> {
         : int.tryParse(dose['Medicayion_ID']?.toString() ?? '');
     if (medId == null) return;
 
+    // Known offline: never hit the network, never show Taken / success.
+    if (_offline) {
+      _showConfirmFailureSnack(
+        MedicationAdherenceHelper.offlineConfirmBlockedMessage(),
+      );
+      return;
+    }
+
     setState(() => _confirmInFlight = true);
     try {
       final civil = MedicationAdherenceHelper.civilDateToday();
       final clientId =
-          'simple-${medId}-${civil}-${DateTime.now().millisecondsSinceEpoch}';
+          'simple-$medId-$civil-${DateTime.now().millisecondsSinceEpoch}';
       final res = await ApiService.instance.confirmMedicationDose(
         medicationId: medId,
         civilDate: civil,
@@ -90,20 +120,12 @@ class _SimpleMedicinesPageState extends State<SimpleMedicinesPage> {
         clientConfirmId: clientId,
       );
       if (!mounted) return;
-      if (res['status'] != 'success') {
-        final offline = res['is_connection_error'] == true ||
-            res['error_type'] == 'connection_error';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              offline
-                  ? MedicationAdherenceHelper.offlineConfirmBlockedMessage()
-                  : (res['message']?.toString() ?? 'تعذّر تأكيد الجرعة'),
-              style: const TextStyle(fontFamily: 'Cairo', fontSize: 16),
-            ),
-            backgroundColor: Colors.red.shade700,
-            duration: const Duration(seconds: 4),
-          ),
+      if (!MedicationAdherenceHelper.isConfirmSuccess(res)) {
+        if (MedicationAdherenceHelper.isConnectionFailure(res)) {
+          setState(() => _offline = true);
+        }
+        _showConfirmFailureSnack(
+          MedicationAdherenceHelper.confirmFailureMessage(res),
         );
         return;
       }
@@ -117,6 +139,13 @@ class _SimpleMedicinesPageState extends State<SimpleMedicinesPage> {
         ),
       );
       await _loadDoses();
+    } catch (_) {
+      if (mounted) {
+        setState(() => _offline = true);
+        _showConfirmFailureSnack(
+          MedicationAdherenceHelper.offlineConfirmBlockedMessage(),
+        );
+      }
     } finally {
       if (mounted) setState(() => _confirmInFlight = false);
     }
@@ -175,12 +204,16 @@ class _SimpleMedicinesPageState extends State<SimpleMedicinesPage> {
                                       size: 64, color: Colors.grey),
                                   const SizedBox(height: 12),
                                   Text(
-                                    'لا توجد جرعات مجدولة لليوم',
+                                    _offline
+                                        ? MedicationAdherenceHelper
+                                            .offlineConfirmBlockedMessage()
+                                        : 'لا توجد جرعات مجدولة لليوم',
                                     style: GoogleFonts.cairo(
                                       fontSize: 18,
                                       fontWeight: FontWeight.bold,
                                       color: Colors.black87,
                                     ),
+                                    textAlign: TextAlign.center,
                                   ),
                                 ],
                               ),
@@ -356,33 +389,30 @@ class _SimpleMedicinesPageState extends State<SimpleMedicinesPage> {
                   borderRadius: BorderRadius.circular(14),
                 ),
               ),
-              onPressed: canConfirm
-                  ? () => _confirm(dose)
-                  : (_offline && !confirmed
-                      ? () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                MedicationAdherenceHelper
-                                    .offlineConfirmBlockedMessage(),
-                                style: const TextStyle(
-                                  fontFamily: 'Cairo',
-                                  fontSize: 16,
-                                ),
-                              ),
-                              backgroundColor: Colors.red.shade700,
-                            ),
-                          );
-                        }
-                      : null),
-              child: Text(
-                confirmed ? 'تم التأكيد على الخادم' : 'تم تناول الدواء',
-                style: GoogleFonts.cairo(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-              ),
+              onPressed: _confirmInFlight
+                  ? null
+                  : (canConfirm
+                      ? () => _confirm(dose)
+                      : (_offline && !confirmed
+                          ? () => _confirm(dose)
+                          : null)),
+              child: _confirmInFlight && !confirmed
+                  ? const SizedBox(
+                      height: 26,
+                      width: 26,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 3,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Text(
+                      confirmed ? 'تم التأكيد على الخادم' : 'تم تناول الدواء',
+                      style: GoogleFonts.cairo(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
             ),
           ),
         ],

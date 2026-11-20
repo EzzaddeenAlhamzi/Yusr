@@ -43,6 +43,7 @@ class _MedicinesPageElderlyState extends State<MedicinesPageElderly> {
     try {
       final int? elderlyId = AuthService().isSenior ? AuthService().userId : null;
       final list = await ApiService.instance.getMedications(elderlyId: elderlyId);
+      final medsConnectionError = ApiService.lastListConnectionError;
 
       final civil = MedicationAdherenceHelper.civilDateToday();
       final doseRes = await ApiService.instance.getTodayMedicationDoses(
@@ -50,8 +51,9 @@ class _MedicinesPageElderlyState extends State<MedicinesPageElderly> {
         civilDate: civil,
       );
       final Map<int, Map<String, dynamic>> doseMap = {};
-      var dosesOffline = false;
+      var dosesOffline = true;
       if (doseRes['status'] == 'success' && doseRes['data'] is List) {
+        dosesOffline = false;
         for (final raw in (doseRes['data'] as List)) {
           if (raw is Map) {
             final row = Map<String, dynamic>.from(raw);
@@ -62,8 +64,8 @@ class _MedicinesPageElderlyState extends State<MedicinesPageElderly> {
           }
         }
       } else {
-        dosesOffline = doseRes['is_connection_error'] == true ||
-            doseRes['error_type'] == 'connection_error';
+        dosesOffline = MedicationAdherenceHelper.isConnectionFailure(doseRes) ||
+            medsConnectionError;
       }
 
       final List<MedicineItem> morning = [];
@@ -110,30 +112,29 @@ class _MedicinesPageElderlyState extends State<MedicinesPageElderly> {
 
       if (mounted) {
         setState(() {
-          _morningMedicines = morning;
-          _morningIds = morningIds;
-          _afternoonMedicines = afternoon;
-          _afternoonIds = afternoonIds;
-          _eveningMedicines = evening;
-          _eveningIds = eveningIds;
-          _todayDosesByMed
-            ..clear()
-            ..addAll(doseMap);
-          _dosesOffline = dosesOffline;
+          // Preserve last good catalog/doses when offline so confirm CTA stays
+          // tappable and can show Arabic blocked feedback (no fake Taken).
+          if (!medsConnectionError) {
+            _morningMedicines = morning;
+            _morningIds = morningIds;
+            _afternoonMedicines = afternoon;
+            _afternoonIds = afternoonIds;
+            _eveningMedicines = evening;
+            _eveningIds = eveningIds;
+          }
+          if (!dosesOffline) {
+            _todayDosesByMed
+              ..clear()
+              ..addAll(doseMap);
+          }
+          _dosesOffline = dosesOffline || medsConnectionError;
         });
       }
     } catch (_) {
       if (mounted) {
         setState(() => _dosesOffline = true);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text(
-              'تعذّر جلب قائمة الأدوية. يرجى التأكد من اتصال الخادم والإنترنت.',
-              style: TextStyle(fontFamily: 'Cairo'),
-            ),
-            backgroundColor: Colors.red.shade700,
-            duration: const Duration(seconds: 4),
-          ),
+        _showConfirmFailureSnack(
+          MedicationAdherenceHelper.offlineConfirmBlockedMessage(),
         );
       }
     } finally {
@@ -141,14 +142,35 @@ class _MedicinesPageElderlyState extends State<MedicinesPageElderly> {
     }
   }
 
+  void _showConfirmFailureSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          message,
+          style: GoogleFonts.tajawal(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+        backgroundColor: Colors.red.shade700,
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
+
   Future<void> _confirmDose(int? medId) async {
     if (medId == null || _confirmInFlight) return;
+    // Known offline: never hit the network, never show Taken / success.
+    if (_dosesOffline) {
+      _showConfirmFailureSnack(
+        MedicationAdherenceHelper.offlineConfirmBlockedMessage(),
+      );
+      return;
+    }
     setState(() => _confirmInFlight = true);
     try {
       final dose = _todayDosesByMed[medId];
       final civil = MedicationAdherenceHelper.civilDateToday();
       final clientId =
-          'el-${medId}-${civil}-${DateTime.now().millisecondsSinceEpoch}';
+          'el-$medId-$civil-${DateTime.now().millisecondsSinceEpoch}';
       final res = await ApiService.instance.confirmMedicationDose(
         medicationId: medId,
         civilDate: civil,
@@ -156,20 +178,12 @@ class _MedicinesPageElderlyState extends State<MedicinesPageElderly> {
         clientConfirmId: clientId,
       );
       if (!mounted) return;
-      if (res['status'] != 'success') {
-        final offline = res['is_connection_error'] == true ||
-            res['error_type'] == 'connection_error';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              offline
-                  ? MedicationAdherenceHelper.offlineConfirmBlockedMessage()
-                  : (res['message']?.toString() ?? 'تعذّر تأكيد الجرعة'),
-              style: GoogleFonts.tajawal(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            backgroundColor: Colors.red.shade700,
-            duration: const Duration(seconds: 4),
-          ),
+      if (!MedicationAdherenceHelper.isConfirmSuccess(res)) {
+        if (MedicationAdherenceHelper.isConnectionFailure(res)) {
+          setState(() => _dosesOffline = true);
+        }
+        _showConfirmFailureSnack(
+          MedicationAdherenceHelper.confirmFailureMessage(res),
         );
         return;
       }
@@ -184,6 +198,13 @@ class _MedicinesPageElderlyState extends State<MedicinesPageElderly> {
         ),
       );
       await _loadMedicinesFromDb();
+    } catch (_) {
+      if (mounted) {
+        setState(() => _dosesOffline = true);
+        _showConfirmFailureSnack(
+          MedicationAdherenceHelper.offlineConfirmBlockedMessage(),
+        );
+      }
     } finally {
       if (mounted) setState(() => _confirmInFlight = false);
     }
@@ -522,14 +543,30 @@ class _MedicinesPageElderlyState extends State<MedicinesPageElderly> {
                                 borderRadius: BorderRadius.circular(12),
                                 border: Border.all(color: const Color(0xFFF9A825)),
                               ),
-                              child: Text(
-                                MedicationAdherenceHelper.outdatedCacheBanner(),
-                                textAlign: TextAlign.right,
-                                style: GoogleFonts.tajawal(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: const Color(0xFFF57F17),
-                                ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Text(
+                                    MedicationAdherenceHelper.outdatedCacheBanner(),
+                                    textAlign: TextAlign.right,
+                                    style: GoogleFonts.tajawal(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: const Color(0xFFF57F17),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    MedicationAdherenceHelper
+                                        .offlineConfirmBlockedMessage(),
+                                    textAlign: TextAlign.right,
+                                    style: GoogleFonts.tajawal(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                      color: const Color(0xFFBF360C),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ],
@@ -884,33 +921,30 @@ class _MedicinesPageElderlyState extends State<MedicinesPageElderly> {
                     borderRadius: BorderRadius.circular(16),
                   ),
                 ),
-                onPressed: canConfirm
-                    ? () => _confirmDose(medId)
-                    : (_dosesOffline && !confirmed
-                        ? () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  MedicationAdherenceHelper
-                                      .offlineConfirmBlockedMessage(),
-                                  style: GoogleFonts.tajawal(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                backgroundColor: Colors.red.shade700,
-                              ),
-                            );
-                          }
-                        : null),
-                child: Text(
-                  confirmed ? 'تم التأكيد على الخادم' : 'تم تناول الدواء',
-                  style: GoogleFonts.tajawal(
-                    color: Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+                onPressed: _confirmInFlight
+                    ? null
+                    : (canConfirm
+                        ? () => _confirmDose(medId)
+                        : (_dosesOffline && !confirmed
+                            ? () => _confirmDose(medId)
+                            : null)),
+                child: _confirmInFlight && !confirmed
+                    ? const SizedBox(
+                        height: 28,
+                        width: 28,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 3,
+                          color: Colors.white,
+                        ),
+                      )
+                    : Text(
+                        confirmed ? 'تم التأكيد على الخادم' : 'تم تناول الدواء',
+                        style: GoogleFonts.tajawal(
+                          color: Colors.white,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
               ),
             ),
           ],

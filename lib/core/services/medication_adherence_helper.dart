@@ -49,4 +49,26 @@ class MedicationAdherenceHelper {
   static String caregiverReadOnlyMessage() {
     return 'الاطلاع فقط: تأكيد الجرعة يتم من حساب كبير السن على الخادم.';
   }
+
+  /// True when the API payload indicates network/backend unavailable.
+  static bool isConnectionFailure(Map<String, dynamic>? res) {
+    if (res == null) return true;
+    return res['is_connection_error'] == true ||
+        res['error_type'] == 'connection_error';
+  }
+
+  /// Server confirm success only — never invent local Taken.
+  static bool isConfirmSuccess(Map<String, dynamic>? res) {
+    return res != null && res['status'] == 'success';
+  }
+
+  /// Arabic failure copy for a confirm attempt (offline → explicit blocked text).
+  static String confirmFailureMessage(Map<String, dynamic>? res) {
+    if (isConnectionFailure(res)) {
+      return offlineConfirmBlockedMessage();
+    }
+    final msg = res?['message']?.toString();
+    if (msg != null && msg.trim().isNotEmpty) return msg;
+    return 'تعذّر تأكيد الجرعة';
+  }
 }

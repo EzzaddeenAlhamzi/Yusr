@@ -242,6 +242,46 @@ class LocalNotificationService {
     return true;
   }
 
+  /// Reconcile local appointment reminders for one elderly on this device.
+  /// Prefs / offset labels are device-local (not server-synced). Callers must
+  /// pass only appointments authorized for that elderly.
+  Future<void> syncAppointmentReminders({
+    required int elderlyId,
+    required List<Map<String, dynamic>> items,
+    required QuietHoursPolicy quiet,
+    String navRoute = '/appointments',
+  }) async {
+    for (final item in items) {
+      final id = item['id'] is int
+          ? item['id'] as int
+          : int.tryParse(item['id']?.toString() ?? '');
+      final dt = item['dateTime'];
+      if (id == null || dt is! DateTime) continue;
+      final offset = AppointmentReminderOffset.minutesFromLabel(
+        item['advanceReminder']?.toString(),
+      );
+      final shouldCancel = item['isCancelled'] == true ||
+          item['isPast'] == true ||
+          offset <= 0;
+      if (shouldCancel) {
+        await cancelAppointmentReminder(
+          elderlyId: elderlyId,
+          appointmentId: id,
+        );
+        continue;
+      }
+      await scheduleAppointmentReminder(
+        elderlyId: elderlyId,
+        appointmentId: id,
+        title: item['title']?.toString() ?? 'موعد',
+        appointmentAtLocal: dt,
+        offsetMinutes: offset,
+        quiet: quiet,
+        navRoute: navRoute,
+      );
+    }
+  }
+
   Future<bool> scheduleAppointmentReminder({
     required int elderlyId,
     required int appointmentId,
@@ -249,6 +289,8 @@ class LocalNotificationService {
     required DateTime appointmentAtLocal,
     required int offsetMinutes,
     required QuietHoursPolicy quiet,
+    /// Deep-link route for notification tap (CG `/appointments`, elderly `/dates`).
+    String navRoute = '/appointments',
   }) async {
     // Always clear prior stable + legacy IDs first so offset changes never
     // leave duplicate pending reminders for the same appointment.
@@ -278,6 +320,7 @@ class LocalNotificationService {
         'appointment_at': appointmentAtLocal.toIso8601String(),
         'fire_at': fireAt.toIso8601String(),
         'title': title,
+        'nav_route': navRoute,
       };
       return true;
     }
@@ -288,7 +331,7 @@ class LocalNotificationService {
 
     final when = tz.TZDateTime.from(fireAt, tz.local);
     final payload = jsonEncode({
-      'route': '/appointments',
+      'route': navRoute,
       'appointment_id': appointmentId,
       'elderly_id': elderlyId,
       'kind': 'appt',

@@ -429,6 +429,68 @@ void main() {
       );
       expect(pendingFor(apptId), isNull);
     });
+
+    test('elderly DatesScreen navRoute /dates stored on schedule', () async {
+      final ok =
+          await LocalNotificationService.instance.scheduleAppointmentReminder(
+        elderlyId: elderlyId,
+        appointmentId: apptId,
+        title: 'موعد مسن',
+        appointmentAtLocal: apptAt,
+        offsetMinutes: 60,
+        quiet: quiet,
+        navRoute: '/dates',
+      );
+      expect(ok, isTrue);
+      expect(pendingFor(apptId)!['nav_route'], '/dates');
+    });
+
+    test('syncAppointmentReminders reconciles past/disable/upcoming', () async {
+      await LocalNotificationService.instance.syncAppointmentReminders(
+        elderlyId: elderlyId,
+        quiet: quiet,
+        navRoute: '/dates',
+        items: [
+          {
+            'id': apptId,
+            'title': 'قادم',
+            'dateTime': apptAt,
+            'advanceReminder': AppointmentReminderOffset.defaultLabel,
+            'isPast': false,
+            'isCancelled': false,
+          },
+          {
+            'id': otherApptId,
+            'title': 'ماضٍ',
+            'dateTime': DateTime.now().subtract(const Duration(days: 1)),
+            'advanceReminder': 'قبل الموعد بـ 30 دقيقة',
+            'isPast': true,
+            'isCancelled': false,
+          },
+        ],
+      );
+      expect(pendingFor(apptId), isNotNull);
+      expect(pendingFor(apptId)!['nav_route'], '/dates');
+      expect(pendingFor(apptId)!['offset_minutes'], 60);
+      expect(pendingFor(otherApptId), isNull);
+
+      await LocalNotificationService.instance.syncAppointmentReminders(
+        elderlyId: elderlyId,
+        quiet: quiet,
+        navRoute: '/dates',
+        items: [
+          {
+            'id': apptId,
+            'title': 'قادم',
+            'dateTime': apptAt,
+            'advanceReminder': 'بدون تذكير مسبق',
+            'isPast': false,
+            'isCancelled': false,
+          },
+        ],
+      );
+      expect(pendingFor(apptId), isNull);
+    });
   });
 
   group('P2.3 M-3 account switch cancels prior schedules', () {

@@ -46,8 +46,10 @@ class YusrMapZone {
     required this.center,
     required this.radiusMeters,
     this.label,
-    this.color = const Color(0x33125D73),
-    this.borderColor = const Color(0xFF125D73),
+    // Stronger fill/border so EMA screenshots show a clear geographic circle.
+    this.color = const Color(0x55125D73),
+    this.borderColor = const Color(0xFF0D47A1),
+    this.borderStrokeWidth = 3,
   });
 
   final LatLng center;
@@ -55,6 +57,7 @@ class YusrMapZone {
   final String? label;
   final Color color;
   final Color borderColor;
+  final double borderStrokeWidth;
 }
 
 class _YusrMapViewState extends State<YusrMapView> {
@@ -68,6 +71,19 @@ class _YusrMapViewState extends State<YusrMapView> {
   void initState() {
     super.initState();
     _tilesFailed = widget.debugForceTilesFailed;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _fitContent());
+  }
+
+  void _fitContent() {
+    try {
+      if (widget.zones.isNotEmpty && !_hasFix) {
+        final z = widget.zones.first;
+        // ~14–15 keeps a typical 100–200 m radius readable on phone.
+        _controller.move(z.center, 15);
+      } else if (_hasFix) {
+        _controller.move(_center, _controller.camera.zoom);
+      }
+    } catch (_) {}
   }
 
   bool get _hasFix => widget.latitude != null && widget.longitude != null;
@@ -161,7 +177,7 @@ class _YusrMapViewState extends State<YusrMapView> {
                           radius: z.radiusMeters,
                           useRadiusInMeter: true,
                           color: z.color,
-                          borderStrokeWidth: 2,
+                          borderStrokeWidth: z.borderStrokeWidth,
                           borderColor: z.borderColor,
                         ),
                     ],

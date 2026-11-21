@@ -8,6 +8,10 @@ import 'package:flutter_map/flutter_map.dart';
 ///
 /// Primary: OpenStreetMap France community tiles (OSM data).
 /// Fallback: CARTO Voyager (OSM-derived; free raster, no API key).
+///
+/// Compliance: OSM France disallows login-walled maps; CARTO free needs an
+/// API key — see store `P2_4_MAP_PROVIDER_COMPLIANCE.md` (PO DECISION for prod).
+/// URLs stay configurable; do not ship paid billing credentials without PO.
 class OsmTileProvider {
   OsmTileProvider._();
 

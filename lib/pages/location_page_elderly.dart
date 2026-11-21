@@ -177,16 +177,34 @@ class _LocationPageElderlyState extends State<LocationPageElderly> {
         return;
       }
       final ok = await _sharing.publishOnce(manual: true);
-      final pos = _sharing.lastKnownPosition;
-      if (pos != null) {
-        _lat = pos.latitude;
-        _lng = pos.longitude;
-        _accuracyM = pos.accuracy;
-        _updatedAt = DateTime.now();
+      if (ok) {
+        final pos = _sharing.lastKnownPosition;
+        if (pos != null) {
+          _lat = pos.latitude;
+          _lng = pos.longitude;
+          _accuracyM = pos.accuracy;
+          _updatedAt = DateTime.now();
+        }
+        _statusText = 'تم تحديث الموقع من GPS';
+      } else {
+        // Keep last-known coords if any; do NOT bump _updatedAt (no new GPS).
+        final err = _sharing.lastError ??
+            LocationSharingService.errGpsUnavailable;
+        _statusText = err;
+        if (_lat != null && _lng != null) {
+          _statusText =
+              '$err — يُعرض آخر موقع معروف (${LocationFreshness.formatAge(_updatedAt)})';
+        }
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(err, style: GoogleFonts.tajawal()),
+              backgroundColor: Colors.orange.shade800,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
       }
-      _statusText = ok
-          ? 'تم التحديث يدوياً'
-          : (_sharing.lastError ?? 'تعذّر التحديث');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -270,6 +288,7 @@ class _LocationPageElderlyState extends State<LocationPageElderly> {
     final out = <YusrMapZone>[];
     for (final z in _zones) {
       if ((z['approval_status']?.toString() ?? '') != 'approved') continue;
+      if (z['is_active'] == false) continue;
       final lat = double.tryParse(
         (z['center_lat'] ?? z['latitude'])?.toString() ?? '',
       );
@@ -478,11 +497,6 @@ class _LocationPageElderlyState extends State<LocationPageElderly> {
     final coords = (_lat != null && _lng != null)
         ? '${_lat!.toStringAsFixed(5)}, ${_lng!.toStringAsFixed(5)}'
         : 'غير معروف';
-    final freshness = !_sharingEnabled
-        ? LocationFreshness.sharingStopped
-        : (_lat == null || _lng == null)
-            ? LocationFreshness.noData
-            : LocationFreshness.fromTimestamp(_updatedAt);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
@@ -503,7 +517,13 @@ class _LocationPageElderlyState extends State<LocationPageElderly> {
               style: GoogleFonts.tajawal(fontSize: 16)),
           const SizedBox(height: 8),
           Text(
-            LocationFreshness.arabicLabel(freshness),
+            LocationFreshness.arabicLabel(
+              LocationFreshness.resolve(
+                capturedAt: _updatedAt,
+                sharingStoppedFlag: !_sharingEnabled,
+                hasCoordinates: _lat != null && _lng != null,
+              ),
+            ),
             textAlign: TextAlign.center,
             style: GoogleFonts.tajawal(
               fontSize: 15,

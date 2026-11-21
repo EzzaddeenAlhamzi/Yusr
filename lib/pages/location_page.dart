@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
@@ -39,16 +41,22 @@ class _LocationPageState extends State<LocationPage> {
   String _zoneExitTime = '';
   List<Map<String, String>> _movementHistory = [];
   List<YusrMapZone> _zones = [];
+  Timer? _freshnessTicker;
 
   @override
   void initState() {
     super.initState();
     _loadLocationData();
     SeniorManager().addListener(_onSeniorChanged);
+    // Age labels without waiting for a new API payload.
+    _freshnessTicker = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted && _capturedAt != null) setState(() {});
+    });
   }
 
   @override
   void dispose() {
+    _freshnessTicker?.cancel();
     SeniorManager().removeListener(_onSeniorChanged);
     super.dispose();
   }
@@ -108,16 +116,19 @@ class _LocationPageState extends State<LocationPage> {
           acc = double.tryParse(loc['L_AccuracyMeters']?.toString() ??
               loc['accuracy_meters']?.toString() ??
               '');
-          updateTime = loc['L_UpdateTime']?.toString() ??
+          updateTime = loc['observed_at_utc']?.toString() ??
+              loc['L_UpdateTime']?.toString() ??
               loc['created_at']?.toString() ??
               '';
-          capturedAt = DateTime.tryParse(updateTime);
-          freshness = LocationFreshness.fromRawLabel(
-            loc['freshness']?.toString(),
+          // Authoritative observation time (UTC ISO or UTC-naive Laravel).
+          capturedAt = LocationFreshness.parseObservationTime(updateTime);
+          // Always derive from timestamp — never prefer a stale server enum.
+          freshness = LocationFreshness.resolve(
+            capturedAt: capturedAt,
+            serverFreshness: loc['freshness']?.toString(),
+            sharingStoppedFlag: sharingKnown && !sharingOn,
+            hasCoordinates: lat != null && lng != null,
           );
-          if (freshness == LocationFreshness.unknown && capturedAt != null) {
-            freshness = LocationFreshness.fromTimestamp(capturedAt);
-          }
         } else if (!sharingOn && sharingKnown) {
           freshness = LocationFreshness.sharingStopped;
         } else {
@@ -181,10 +192,11 @@ class _LocationPageState extends State<LocationPage> {
               : history.map((h) {
                   final hLat = h['L_Latitude']?.toString() ?? '';
                   final hLng = h['L_Longitude']?.toString() ?? '';
-                  final hTimeRaw = h['L_UpdateTime']?.toString() ??
+                  final hTimeRaw = h['observed_at_utc']?.toString() ??
+                      h['L_UpdateTime']?.toString() ??
                       h['created_at']?.toString() ??
                       '';
-                  final hDt = DateTime.tryParse(hTimeRaw);
+                  final hDt = LocationFreshness.parseObservationTime(hTimeRaw);
                   final accM = h['L_AccuracyMeters'] ?? h['accuracy_meters'];
                   final status = accM != null
                       ? 'دقة: $accM م'
@@ -240,9 +252,12 @@ class _LocationPageState extends State<LocationPage> {
       final title = (n['N_Title'] ?? '').toString();
       final msg = (n['N_Message'] ?? '').toString();
       final status = (n['N_Status'] ?? '').toString();
+      // Server uses Arabic «غير مقروء» (Notification::STATUS_UNREAD).
       final unread = status == 'unread' ||
           status == 'Unread' ||
           status == 'جديد' ||
+          status == 'غير مقروء' ||
+          status == 'Active' ||
           status.isEmpty;
       final kind = LocationAlertCategory.classify(
         eventType: n['event_type']?.toString(),
@@ -595,14 +610,21 @@ class _LocationPageState extends State<LocationPage> {
     );
   }
 
+  /// Live-derived freshness so banner ages without a new API response.
+  String get _liveFreshnessCode {
+    final sharingOff = _sharingStopped || !_sharingEnabled;
+    return LocationFreshness.resolve(
+      capturedAt: _capturedAt,
+      serverFreshness: _freshness,
+      sharingStoppedFlag: sharingOff,
+      hasCoordinates: _latitude != null && _longitude != null,
+    );
+  }
+
   // ==================== شريط حداثة الموقع (بدون ادّعاء تتبّع حي) ====================
   Widget _buildLocationStatusBanner() {
     final sharingOff = _sharingStopped || !_sharingEnabled;
-    final code = sharingOff
-        ? LocationFreshness.sharingStopped
-        : (_latitude == null || _longitude == null)
-            ? LocationFreshness.noData
-            : _freshness;
+    final code = _liveFreshnessCode;
     final isOk = code == LocationFreshness.fresh || code == LocationFreshness.recent;
     final bg = sharingOff || code == LocationFreshness.stale || code == LocationFreshness.old
         ? const Color(0xFFFFF3E0)
@@ -803,7 +825,7 @@ class _LocationPageState extends State<LocationPage> {
           Align(
             alignment: Alignment.centerRight,
             child: Text(
-              '${LocationFreshness.arabicLabel(_freshness)} · ${LocationFreshness.formatAge(_capturedAt)}',
+              '${LocationFreshness.arabicLabel(_liveFreshnessCode)} · ${LocationFreshness.formatAge(_capturedAt)}',
               style: GoogleFonts.cairo(fontSize: 11, color: AppColors.textSecondary),
             ),
           ),

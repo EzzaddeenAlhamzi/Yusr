@@ -1,4 +1,7 @@
-/// P2.4 — honest foreground-only freshness labels (Arabic UI, no live-tracking claims).
+/// P2.4 — honest foreground-only freshness (Arabic UI, no live-tracking claims).
+///
+/// Authoritative clock: observation timestamp + device [now].
+/// Banner and detail card must use the same derived code from that pair.
 class LocationFreshness {
   LocationFreshness._();
 
@@ -11,14 +14,75 @@ class LocationFreshness {
   static const String noData = 'no_data';
   static const String updateFailed = 'update_failed';
 
-  /// Classify from a capture timestamp. Never invents "live tracking".
+  /// ≤2 min
+  static const int freshMaxMinutes = 2;
+
+  /// ≤30 min
+  static const int recentMaxMinutes = 30;
+
+  /// ≤24 h
+  static const int staleMaxMinutes = 24 * 60;
+
+  /// Parse server observation time.
+  ///
+  /// Laravel stores `L_UpdateTime` in app TZ (**UTC**). Naive strings
+  /// (`2026-11-21 12:00:00`) are treated as UTC so age matches server.
+  /// Strings with `Z` / offset keep that zone. Result is absolute time.
+  static DateTime? parseObservationTime(String? raw) {
+    if (raw == null) return null;
+    final s = raw.trim();
+    if (s.isEmpty || s == '—' || s == '-') return null;
+
+    // Explicit offset / Z
+    final withZone = DateTime.tryParse(s);
+    if (s.endsWith('Z') ||
+        RegExp(r'[+-]\d{2}:?\d{2}$').hasMatch(s) ||
+        s.contains('T') && withZone != null && withZone.isUtc) {
+      return withZone?.toUtc();
+    }
+
+    // MySQL / Laravel naive datetime → UTC
+    final normalized = s.contains('T') ? s : s.replaceFirst(' ', 'T');
+    final utc = DateTime.tryParse('${normalized}Z');
+    if (utc != null) return utc.toUtc();
+
+    final localGuess = DateTime.tryParse(s);
+    return localGuess?.toUtc();
+  }
+
+  /// Classify from observation timestamp vs [now].
+  /// Future skew (>2 min ahead) → [unknown] (never treat as fresh).
+  /// Does **not** invent live tracking.
   static String fromTimestamp(DateTime? capturedAt, {DateTime? now}) {
     if (capturedAt == null) return unknown;
-    final mins = (now ?? DateTime.now()).difference(capturedAt).inMinutes.abs();
-    if (mins <= 2) return fresh;
-    if (mins <= 30) return recent;
-    if (mins <= 24 * 60) return stale;
+    final clock = (now ?? DateTime.now()).toUtc();
+    final at = capturedAt.toUtc();
+    final delta = clock.difference(at);
+    // Clock skew: observation in the future
+    if (delta.isNegative && delta.abs().inMinutes > 2) {
+      return unknown;
+    }
+    final mins = delta.abs().inMinutes;
+    if (mins <= freshMaxMinutes) return fresh;
+    if (mins <= recentMaxMinutes) return recent;
+    if (mins <= staleMaxMinutes) return stale;
     return old;
+  }
+
+  /// Prefer timestamp over any server enum (server enum can be stale on client).
+  static String resolve({
+    DateTime? capturedAt,
+    String? serverFreshness,
+    bool sharingStoppedFlag = false,
+    bool hasCoordinates = true,
+    DateTime? now,
+  }) {
+    if (sharingStoppedFlag) return sharingStopped;
+    if (!hasCoordinates) return noData;
+    if (capturedAt != null) {
+      return fromTimestamp(capturedAt, now: now);
+    }
+    return fromRawLabel(serverFreshness);
   }
 
   static String fromRawLabel(String? raw) {
@@ -102,7 +166,7 @@ class LocationFreshness {
     }
   }
 
-  /// Arabic-readable local timestamp (no raw ISO in UI).
+  /// Arabic-readable **local** timestamp (no raw ISO in UI).
   static String formatArabicDateTime(DateTime? dt) {
     if (dt == null) return 'غير متوفر';
     final local = dt.toLocal();
@@ -113,7 +177,12 @@ class LocationFreshness {
 
   static String formatAge(DateTime? capturedAt, {DateTime? now}) {
     if (capturedAt == null) return 'العمر: غير معروف';
-    final diff = (now ?? DateTime.now()).difference(capturedAt).abs();
+    final clock = (now ?? DateTime.now()).toUtc();
+    final at = capturedAt.toUtc();
+    var diff = clock.difference(at);
+    if (diff.isNegative) {
+      return 'العمر: غير متسق مع ساعة الجهاز';
+    }
     if (diff.inMinutes < 1) return 'العمر: أقل من دقيقة';
     if (diff.inMinutes < 60) return 'العمر: ${diff.inMinutes} دقيقة';
     if (diff.inHours < 48) return 'العمر: ${diff.inHours} ساعة';

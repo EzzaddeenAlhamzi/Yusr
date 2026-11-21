@@ -685,6 +685,18 @@ class LocationController extends Controller
         $data['L_AccuracyMeters'] = $location->L_AccuracyMeters ?? null;
         $data['updated_at'] = $location->L_UpdateTime;
         $data['freshness'] = $this->freshnessLabel($location->L_UpdateTime);
+        // Explicit UTC ISO for clients (app timezone is UTC) — avoids naive TZ drift.
+        try {
+            if ($location->L_UpdateTime) {
+                $data['observed_at_utc'] = Carbon::parse($location->L_UpdateTime)
+                    ->utc()
+                    ->format('Y-m-d\TH:i:s\Z');
+            } else {
+                $data['observed_at_utc'] = null;
+            }
+        } catch (\Throwable $e) {
+            $data['observed_at_utc'] = null;
+        }
 
         return $data;
     }

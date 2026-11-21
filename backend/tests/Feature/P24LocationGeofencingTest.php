@@ -382,6 +382,31 @@ class P24LocationGeofencingTest extends TestCase
         $this->assertSame('rejected', SafeZone::find($zoneId)->approval_status);
     }
 
+    /** Freshness serialization: 3h-old is stale + observed_at_utc present. */
+    public function test_location_freshness_stale_after_three_hours(): void
+    {
+        $elderly = $this->makeElderly('771041050');
+        $cg = $this->makeCaregiver('771041051', (int) $elderly->Eldery_ID);
+        $this->enableSharing($elderly);
+
+        Carbon::setTestNow(Carbon::parse('2026-11-21 15:00:00', 'UTC'));
+        $this->asActor($elderly)->postJson('/api/location', [
+            'latitude' => 15.3694,
+            'longitude' => 44.1910,
+            'accuracy_meters' => 12,
+        ])->assertCreated();
+
+        Carbon::setTestNow(Carbon::parse('2026-11-21 18:00:00', 'UTC'));
+        $cur = $this->asActor($cg)->getJson(
+            '/api/location/current?Elderly_ID='.$elderly->Eldery_ID
+        );
+        $cur->assertOk();
+        $this->assertSame('stale', $cur->json('data.freshness'));
+        $this->assertNotEmpty($cur->json('data.observed_at_utc'));
+        $this->assertStringContainsString('Z', (string) $cur->json('data.observed_at_utc'));
+        Carbon::setTestNow();
+    }
+
     /** HIGH-1 / L4: CG must not receive zone geometry while sharing is off. */
     public function test_sharing_off_caregiver_safe_zones_no_geometry_leak(): void
     {

@@ -105,11 +105,21 @@ class LocationSharingService with WidgetsBindingObserver {
     _timer = null;
   }
 
+  /// GPS / permission outcome for honest Arabic UI (never claim success).
+  static const String errServicesOff =
+      'خدمات الموقع مطفأة على الجهاز — فعّلها ثم أعد المحاولة';
+  static const String errPermissionDenied =
+      'تم رفض إذن الموقع — اسمح بالوصول أثناء استخدام التطبيق';
+  static const String errPermissionPermanentlyDenied =
+      'إذن الموقع مرفوض نهائيًا — افتح إعدادات التطبيق وفعّل الموقع';
+  static const String errGpsUnavailable =
+      'تعذر الحصول على موقع GPS حالياً — سيُعرض آخر موقع معروف إن وُجد';
+
   /// Request while-in-use permission only (no background).
   Future<LocationPermission> ensureForegroundPermission() async {
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
-      _lastError = 'خدمة الموقع مطفأة على الجهاز';
+      _lastError = errServicesOff;
       return LocationPermission.denied;
     }
 
@@ -117,14 +127,29 @@ class LocationSharingService with WidgetsBindingObserver {
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
+    if (permission == LocationPermission.denied) {
+      _lastError = errPermissionDenied;
+    } else if (permission == LocationPermission.deniedForever) {
+      _lastError = errPermissionPermanentlyDenied;
+    }
     return permission;
   }
 
   Future<Position?> acquireCurrentPosition() async {
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      _lastError = errServicesOff;
+      return null;
+    }
+
     final permission = await ensureForegroundPermission();
+    if (permission == LocationPermission.deniedForever) {
+      _lastError = errPermissionPermanentlyDenied;
+      return null;
+    }
     if (permission != LocationPermission.whileInUse &&
         permission != LocationPermission.always) {
-      _lastError = 'لم يُمنح إذن الموقع (أثناء الاستخدام)';
+      _lastError = errPermissionDenied;
       return null;
     }
 
@@ -139,7 +164,7 @@ class LocationSharingService with WidgetsBindingObserver {
       _lastError = null;
       return pos;
     } catch (e) {
-      _lastError = 'تعذّر الحصول على GPS: $e';
+      _lastError = errGpsUnavailable;
       return null;
     }
   }

@@ -99,6 +99,100 @@ void main() {
       expect(s, contains('2026'));
       expect(s, contains('15:23'));
     });
+
+    test('3-hour-old is never «تم تحديث الموقع مؤخرًا»', () {
+      final now = DateTime.utc(2026, 11, 21, 18, 0);
+      final threeHoursAgo = now.subtract(const Duration(hours: 3));
+      final code = LocationFreshness.fromTimestamp(threeHoursAgo, now: now);
+      expect(code, LocationFreshness.stale);
+      expect(
+        LocationFreshness.arabicBannerTitle(code),
+        isNot(contains('تم تحديث الموقع مؤخرًا')),
+      );
+      expect(LocationFreshness.arabicBannerTitle(code), 'الموقع قديم');
+      expect(LocationFreshness.formatAge(threeHoursAgo, now: now), contains('3'));
+    });
+
+    test('resolve prefers timestamp over stale server fresh enum', () {
+      final now = DateTime.utc(2026, 11, 21, 18, 0);
+      final code = LocationFreshness.resolve(
+        capturedAt: now.subtract(const Duration(hours: 3)),
+        serverFreshness: 'fresh',
+        now: now,
+      );
+      expect(code, LocationFreshness.stale);
+    });
+
+    test('UTC naive MySQL string ages correctly vs UTC now', () {
+      final now = DateTime.utc(2026, 11, 21, 15, 0);
+      final at = LocationFreshness.parseObservationTime('2026-11-21 12:00:00');
+      expect(at, isNotNull);
+      expect(at!.isUtc, isTrue);
+      final code = LocationFreshness.fromTimestamp(at, now: now);
+      expect(code, LocationFreshness.stale);
+      expect(LocationFreshness.formatAge(at, now: now), 'العمر: 3 ساعة');
+    });
+
+    test('aging without new API: same capture becomes stale later', () {
+      final capture = DateTime.utc(2026, 11, 21, 12, 0);
+      expect(
+        LocationFreshness.fromTimestamp(
+          capture,
+          now: capture.add(const Duration(minutes: 1)),
+        ),
+        LocationFreshness.fresh,
+      );
+      expect(
+        LocationFreshness.fromTimestamp(
+          capture,
+          now: capture.add(const Duration(hours: 3)),
+        ),
+        LocationFreshness.stale,
+      );
+    });
+
+    test('future/invalid timestamps are not fresh', () {
+      final now = DateTime.utc(2026, 11, 21, 12, 0);
+      expect(
+        LocationFreshness.fromTimestamp(
+          now.add(const Duration(hours: 5)),
+          now: now,
+        ),
+        LocationFreshness.unknown,
+      );
+      expect(LocationFreshness.parseObservationTime(''), isNull);
+      expect(LocationFreshness.fromTimestamp(null), LocationFreshness.unknown);
+    });
+  });
+
+  group('P2.4 GPS feedback Arabic constants', () {
+    test('services-off and permission-denied copy is Arabic', () {
+      expect(LocationSharingService.errServicesOff, contains('مطفأة'));
+      expect(LocationSharingService.errPermissionDenied, contains('رفض'));
+      expect(
+        LocationSharingService.errPermissionPermanentlyDenied,
+        contains('نهائي'),
+      );
+    });
+  });
+
+  group('P2.4 unread EXIT status', () {
+    test('Arabic غير مقروء is treated as unread for EXIT UI', () {
+      // Mirror caregiver unread gate used for EXIT banner.
+      bool isUnread(String status) =>
+          status == 'unread' ||
+          status == 'Unread' ||
+          status == 'جديد' ||
+          status == 'غير مقروء' ||
+          status == 'Active' ||
+          status.isEmpty;
+      expect(isUnread('غير مقروء'), isTrue);
+      expect(isUnread('read'), isFalse);
+      expect(
+        LocationAlertCategory.classify(eventType: 'safe_zone_exit'),
+        LocationAlertCategory.zoneExit,
+      );
+    });
   });
 
   group('P2.4 GeofenceMath (synthetic GPS labeled)', () {

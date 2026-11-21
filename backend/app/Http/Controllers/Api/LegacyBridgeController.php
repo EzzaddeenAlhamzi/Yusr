@@ -154,8 +154,25 @@ class LegacyBridgeController extends Controller
                 return $this->location->store($request);
             case 'get_location_history':
                 return $this->location->history($request);
+            case 'get_location_sharing':
+            case 'location_sharing_status':
+                return $this->location->sharingStatus($request);
+            case 'set_location_sharing':
+            case 'update_location_sharing':
+                return $this->location->setSharing($request);
             case 'get_safe_zones':
                 return $this->location->getSafeZones($request);
+            case 'add_safe_zone':
+            case 'create_safe_zone':
+                return $this->location->storeSafeZone($request);
+            case 'update_safe_zone':
+                return $this->location->updateSafeZone($request);
+            case 'delete_safe_zone':
+                return $this->location->destroySafeZone($request);
+            case 'approve_safe_zone':
+                return $this->location->approveSafeZone($request);
+            case 'reject_safe_zone':
+                return $this->location->rejectSafeZone($request);
 
             case 'get_notifications':
                 return $this->notification->index($request);

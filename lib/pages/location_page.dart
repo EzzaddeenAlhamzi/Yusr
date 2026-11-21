@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../core/constants/app_colors.dart';
 import '../core/widgets/custom_app_bar.dart';
 import '../core/widgets/senior_selector_widget.dart';
+import '../core/widgets/yusr_map_view.dart';
 import '../core/services/senior_manager.dart';
 import '../core/services/api_service.dart';
 
@@ -21,10 +23,15 @@ class _LocationPageState extends State<LocationPage> {
   String _currentLocationName = '';
   double? _latitude;
   double? _longitude;
+  double? _accuracyMeters;
   bool _isLiveLocation = false;
+  bool _sharingEnabled = true;
+  bool _sharingStopped = false;
+  String _freshness = 'unknown';
   bool _hasActiveEmergency = false;
   String _emergencyDetails = '';
   List<Map<String, String>> _movementHistory = [];
+  List<YusrMapZone> _zones = [];
 
   @override
   void initState() {
@@ -50,11 +57,22 @@ class _LocationPageState extends State<LocationPage> {
     setState(() => _isLoading = true);
 
     try {
+      // Sharing status (honest caregiver message when stopped).
+      Map<String, dynamic> sharing = {};
+      try {
+        sharing =
+            await ApiService.instance.getLocationSharing(elderlyId: seniorId);
+      } catch (_) {}
+
       final loc = await ApiService.instance.getLocation(elderlyId: seniorId);
       final history =
           await ApiService.instance.getLocationHistory(elderlyId: seniorId);
       final notifs =
           await ApiService.instance.getNotifications(elderlyId: seniorId);
+      List<Map<String, dynamic>> zones = [];
+      try {
+        zones = await ApiService.instance.getSafeZones(elderlyId: seniorId);
+      } catch (_) {}
 
       // فحص بلاغات الطوارئ الحديثة
       final emergencyNotif = notifs.firstWhere(
@@ -62,6 +80,7 @@ class _LocationPageState extends State<LocationPage> {
             (n['N_Type'] ?? '').toString().contains('طوارئ') ||
             (n['N_Message'] ?? '').toString().contains('استغاثة') ||
             (n['N_Message'] ?? '').toString().contains('طوارئ') ||
+            (n['N_Type'] ?? '').toString().contains('safe_zone') ||
             (n['N_Status'] ?? '').toString() == 'Active',
         orElse: () => {},
       );
@@ -73,57 +92,103 @@ class _LocationPageState extends State<LocationPage> {
       if (mounted) {
         double? lat;
         double? lng;
+        double? acc;
         String updateTime = '';
         bool isLive = false;
+        String freshness = 'unknown';
+        final sharingKnown = sharing.containsKey('location_sharing_enabled') ||
+            sharing.containsKey('sharing_enabled');
+        final sharingOn = !sharingKnown
+            ? true
+            : (sharing['location_sharing_enabled'] == true ||
+                sharing['sharing_enabled'] == true);
 
         if (loc != null && loc is Map) {
-          lat = double.tryParse(loc['L_Latitude']?.toString() ?? '');
-          lng = double.tryParse(loc['L_Longitude']?.toString() ?? '');
+          lat = double.tryParse(loc['L_Latitude']?.toString() ??
+              loc['latitude']?.toString() ??
+              '');
+          lng = double.tryParse(loc['L_Longitude']?.toString() ??
+              loc['longitude']?.toString() ??
+              loc['Longitude']?.toString() ??
+              '');
+          acc = double.tryParse(loc['L_AccuracyMeters']?.toString() ??
+              loc['accuracy_meters']?.toString() ??
+              '');
           updateTime = loc['L_UpdateTime']?.toString() ??
               loc['created_at']?.toString() ??
               '';
+          freshness = loc['freshness']?.toString() ??
+              _freshnessFromTimestamp(updateTime);
+          isLive = freshness == 'fresh';
+        }
 
-          // التحقق مما إذا كان الموقع حديثاً (مباشر) أم موقع أخير معروف
-          isLive = _checkIfLive(updateTime, loc['Status']?.toString());
+        final mapZones = <YusrMapZone>[];
+        for (final z in zones) {
+          if ((z['approval_status']?.toString() ?? '') != 'approved') continue;
+          final zLat = double.tryParse(
+            (z['center_lat'] ?? z['latitude'])?.toString() ?? '',
+          );
+          final zLng = double.tryParse(
+            (z['center_lng'] ?? z['longitude'])?.toString() ?? '',
+          );
+          final zR = double.tryParse(
+            (z['radius_meters'] ?? z['Z_Limit'])?.toString() ?? '',
+          );
+          if (zLat == null || zLng == null || zR == null) continue;
+          mapZones.add(YusrMapZone(
+            center: LatLng(zLat, zLng),
+            radiusMeters: zR,
+            label: z['Z_Name']?.toString() ?? z['name']?.toString(),
+          ));
         }
 
         setState(() {
-          _latitude = lat;
-          _longitude = lng;
-          _isLiveLocation = isLive;
+          _sharingEnabled = sharingOn;
+          _sharingStopped = sharingKnown && !sharingOn;
+          _latitude = _sharingStopped ? null : lat;
+          _longitude = _sharingStopped ? null : lng;
+          _accuracyMeters = _sharingStopped ? null : acc;
+          _isLiveLocation = _sharingStopped ? false : isLive;
+          _freshness = _sharingStopped ? 'sharing_stopped' : freshness;
           _hasActiveEmergency = hasEmerg;
           _emergencyDetails = emergMsg;
+          _zones = mapZones;
 
-          if (lat != null && lng != null) {
+          if (_sharingStopped) {
+            _currentLocationName = 'مشاركة الموقع متوقفة';
+            _lastUpdatedTime = '—';
+          } else if (lat != null && lng != null) {
             _currentLocationName =
                 'خط العرض: ${lat.toStringAsFixed(4)} ، خط الطول: ${lng.toStringAsFixed(4)}';
             _lastUpdatedTime =
-                updateTime.isNotEmpty ? updateTime : 'الآن تقريباً';
+                updateTime.isNotEmpty ? updateTime : 'غير معروف';
           } else {
-            _currentLocationName = senior.location.isNotEmpty &&
-                    senior.location != 'الموقع غير محدد'
-                ? senior.location
-                : 'لا توجد إحداثيات GPS مسجلة حالياً';
+            _currentLocationName = 'لا توجد إحداثيات GPS مسجلة حالياً';
             _lastUpdatedTime = 'غير متوفر';
             _isLiveLocation = false;
           }
 
-          _movementHistory = history.map((h) {
-            final hLat = h['L_Latitude']?.toString() ?? '';
-            final hLng = h['L_Longitude']?.toString() ?? '';
-            final hTime = h['L_UpdateTime']?.toString() ??
-                h['created_at']?.toString() ??
-                '';
-            final scor = h['L_Scor']?.toString() ?? '100';
-            return {
-              'location': (hLat.isNotEmpty && hLng.isNotEmpty)
-                  ? 'إحداثيات: $hLat, $hLng'
-                  : 'موقع مسجل',
-              'time': hTime.isNotEmpty ? hTime : 'سجل سابق',
-              'status': 'دقة الإشارة: $scor%',
-              'icon': '📍',
-            };
-          }).toList();
+          _movementHistory = _sharingStopped
+              ? []
+              : history.map((h) {
+                  final hLat = h['L_Latitude']?.toString() ?? '';
+                  final hLng = h['L_Longitude']?.toString() ?? '';
+                  final hTime = h['L_UpdateTime']?.toString() ??
+                      h['created_at']?.toString() ??
+                      '';
+                  final accM = h['L_AccuracyMeters'] ?? h['accuracy_meters'];
+                  final status = accM != null
+                      ? 'دقة: $accM م'
+                      : 'دقة: غير متوفرة';
+                  return {
+                    'location': (hLat.isNotEmpty && hLng.isNotEmpty)
+                        ? 'إحداثيات: $hLat, $hLng'
+                        : 'موقع مسجل',
+                    'time': hTime.isNotEmpty ? hTime : 'سجل سابق',
+                    'status': status,
+                    'icon': '📍',
+                  };
+                }).toList();
         });
       }
     } catch (e) {
@@ -144,18 +209,16 @@ class _LocationPageState extends State<LocationPage> {
     }
   }
 
-  bool _checkIfLive(String? timeStr, String? status) {
-    if (status == 'Active' || status == 'Live') return true;
-    if (timeStr == null || timeStr.isEmpty) return false;
-    try {
-      final dt = DateTime.tryParse(timeStr);
-      if (dt != null) {
-        final diff = DateTime.now().difference(dt);
-        // إذا كان التحديث خلال آخر 20 دقيقة نعتبره مباشر
-        return diff.inMinutes.abs() <= 20;
-      }
-    } catch (_) {}
-    return true; // في حال تعذر التحليل نعتمد على توفر الإحداثية
+  /// Honest freshness — never treat unparseable timestamps as live.
+  String _freshnessFromTimestamp(String? timeStr) {
+    if (timeStr == null || timeStr.isEmpty) return 'unknown';
+    final dt = DateTime.tryParse(timeStr);
+    if (dt == null) return 'unknown';
+    final mins = DateTime.now().difference(dt).inMinutes.abs();
+    if (mins <= 2) return 'fresh';
+    if (mins <= 30) return 'recent';
+    if (mins <= 24 * 60) return 'stale';
+    return 'old';
   }
 
   Future<void> _openGoogleMaps({bool isEmergency = false}) async {
@@ -375,6 +438,34 @@ class _LocationPageState extends State<LocationPage> {
   Widget _buildLocationStatusBanner() {
     final hasCoords = _latitude != null && _longitude != null;
 
+    if (_sharingStopped || !_sharingEnabled) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF3E0),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFFF9800), width: 1.2),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.location_disabled_rounded,
+                color: Color(0xFFE65100), size: 22),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'مشاركة الموقع متوقفة',
+                style: GoogleFonts.cairo(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: const Color(0xFFE65100),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     if (!hasCoords) {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -390,7 +481,7 @@ class _LocationPageState extends State<LocationPage> {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                'الموقع غير متاح: بانتظار استلام إحداثيات GPS حديثة من جهاز كبير السن.',
+                'الموقع غير معروف حالياً — بانتظار إحداثيات GPS من جهاز كبير السن.',
                 style: GoogleFonts.cairo(
                   fontSize: 12,
                   color: const Color(0xFF616161),
@@ -489,167 +580,56 @@ class _LocationPageState extends State<LocationPage> {
     }
   }
 
-  // ==================== خريطة الموقع التفاعلية ====================
+  // ==================== خريطة الموقع التفاعلية (OSM حقيقية) ====================
   Widget _buildMapContainer() {
-    final hasCoords = _latitude != null && _longitude != null;
-    final pinColor = _isLiveLocation
-        ? const Color(0xFF2E7D32)
-        : (_hasActiveEmergency
-            ? const Color(0xFFE53935)
-            : const Color(0xFFE65100));
-
-    return Container(
-      width: double.infinity,
-      height: 230,
-      decoration: BoxDecoration(
-        color: AppColors.cardColor,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.cardBorderColor, width: 1),
-        boxShadow: const [
-          BoxShadow(
-            color: Colors.black12,
-            blurRadius: 8,
-            offset: Offset(0, 3),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(18),
-        child: Stack(
-          children: [
-            // خلفية رسم الخريطة التوضيحية
-            CustomPaint(
-              size: const Size(double.infinity, 230),
-              painter: MapPainter(),
-            ),
-
-            // زر التحديث اليدوي داخل الخريطة
-            Positioned(
-              top: 12,
-              right: 12,
-              child: FloatingActionButton.small(
-                heroTag: 'refresh_loc_btn',
-                onPressed: _loadLocationData,
-                backgroundColor: Colors.white,
-                elevation: 3,
-                tooltip: 'تحديث الموقع الآن',
-                child: _isLoading
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: AppColors.mainColor,
-                        ),
-                      )
-                    : const Icon(
-                        Icons.my_location,
-                        color: AppColors.mainColor,
-                        size: 20,
-                      ),
-              ),
-            ),
-
-            // زر التكبير/فتح في خرائط Google مباشرة من الخريطة
-            Positioned(
-              top: 12,
-              left: 12,
-              child: Material(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                elevation: 3,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(20),
-                  onTap: () => _openGoogleMaps(),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 6),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.open_in_new_rounded,
-                            size: 15, color: AppColors.mainColor),
-                        const SizedBox(width: 4),
-                        Text(
-                          'Google Maps',
-                          style: GoogleFonts.cairo(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.mainColor,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-
-            // ماركر الموقع في منتصف الخريطة
-            Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(5),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: pinColor.withValues(alpha: 0.4),
-                          blurRadius: 10,
-                          spreadRadius: 2,
-                        ),
-                      ],
-                    ),
-                    child: Icon(
-                      Icons.location_on,
-                      color: pinColor,
-                      size: 42,
-                    ),
-                  ),
-                  Container(
-                    width: 14,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.black26,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.95),
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Colors.black12,
-                          blurRadius: 4,
-                        ),
-                      ],
-                    ),
-                    child: Text(
-                      hasCoords
-                          ? (_isLiveLocation
-                              ? 'الموقع المباشر الآن'
-                              : 'آخر موقع معروف')
-                          : 'الموقع غير محدد',
-                      style: GoogleFonts.cairo(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: pinColor,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+    return Stack(
+      children: [
+        YusrMapView(
+          latitude: _latitude,
+          longitude: _longitude,
+          accuracyMeters: _accuracyMeters,
+          height: 260,
+          zones: _zones,
         ),
-      ),
+        Positioned(
+          top: 12,
+          right: 12,
+          child: FloatingActionButton.small(
+            heroTag: 'refresh_loc_btn',
+            onPressed: _loadLocationData,
+            backgroundColor: Colors.white,
+            elevation: 3,
+            tooltip: 'تحديث الموقع الآن',
+            child: _isLoading
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.mainColor,
+                    ),
+                  )
+                : const Icon(
+                    Icons.my_location,
+                    color: AppColors.mainColor,
+                    size: 20,
+                  ),
+          ),
+        ),
+        Positioned(
+          top: 12,
+          left: 56,
+          child: Material(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            child: IconButton(
+              tooltip: 'فتح في خرائط خارجية',
+              onPressed: () => _openGoogleMaps(),
+              icon: const Icon(Icons.open_in_new, color: AppColors.mainColor),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -711,6 +691,36 @@ class _LocationPageState extends State<LocationPage> {
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'الدقة الأفقية:',
+                style: GoogleFonts.cairo(
+                  fontSize: 12,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              Text(
+                _accuracyMeters != null
+                    ? '${_accuracyMeters!.toStringAsFixed(1)} م'
+                    : 'غير متوفرة',
+                style: GoogleFonts.cairo(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.mainColor,
+                ),
+              ),
+            ],
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Text(
+              'حالة الحداثة: $_freshness',
+              style: GoogleFonts.cairo(fontSize: 11, color: AppColors.textSecondary),
+            ),
           ),
         ],
       ),
@@ -1018,60 +1028,3 @@ class _LocationPageState extends State<LocationPage> {
   }
 }
 
-class MapPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final bgPaint = Paint()..color = const Color(0xFFF2F0EB);
-    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), bgPaint);
-
-    final parkPaint = Paint()..color = const Color(0xFFD4EAD6);
-    final parkPath1 = Path()
-      ..moveTo(size.width * 0.4, size.height * 0.2)
-      ..lineTo(size.width * 0.65, size.height * 0.25)
-      ..lineTo(size.width * 0.6, size.height * 0.5)
-      ..lineTo(size.width * 0.35, size.height * 0.45)
-      ..close();
-    canvas.drawPath(parkPath1, parkPaint);
-
-    final parkPath2 = Path()
-      ..moveTo(size.width * 0.1, size.height * 0.6)
-      ..lineTo(size.width * 0.3, size.height * 0.65)
-      ..lineTo(size.width * 0.25, size.height * 0.9)
-      ..lineTo(size.width * 0.05, size.height * 0.8)
-      ..close();
-    canvas.drawPath(parkPath2, parkPaint);
-
-    final roadPaint = Paint()
-      ..color = Colors.white
-      ..strokeWidth = 14
-      ..style = PaintingStyle.stroke;
-
-    final secondaryRoadPaint = Paint()
-      ..color = const Color(0xFFFFFFFF)
-      ..strokeWidth = 7
-      ..style = PaintingStyle.stroke;
-
-    final mainRoad = Path()
-      ..moveTo(size.width * 0.1, 0)
-      ..lineTo(size.width * 0.7, size.height);
-    canvas.drawPath(mainRoad, roadPaint);
-
-    final crossRoad = Path()
-      ..moveTo(0, size.height * 0.4)
-      ..lineTo(size.width, size.height * 0.4);
-    canvas.drawPath(crossRoad, roadPaint);
-
-    final subRoad1 = Path()
-      ..moveTo(size.width * 0.5, 0)
-      ..lineTo(size.width * 0.9, size.height * 0.8);
-    canvas.drawPath(subRoad1, secondaryRoadPaint);
-
-    final subRoad2 = Path()
-      ..moveTo(0, size.height * 0.7)
-      ..lineTo(size.width, size.height * 0.75);
-    canvas.drawPath(subRoad2, secondaryRoadPaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}

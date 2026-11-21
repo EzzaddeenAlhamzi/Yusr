@@ -15,6 +15,9 @@ class Kernel extends ConsoleKernel
         // P2.3 Channel B — idempotent overdue unconfirmed → caregiver in-app alerts.
         // No FCM. Safe to re-run (unique Caregiver_ID+event_type+occurrence_key).
         $schedule->command('notifications:dispatch-overdue-med-alerts')->everyMinute();
+
+        // P2.4-A — 7-day location history retention.
+        $schedule->command('location:cleanup-history')->daily();
     }
 
     /**

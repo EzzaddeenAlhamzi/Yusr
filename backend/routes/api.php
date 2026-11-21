@@ -94,11 +94,18 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/devices', [DeviceController::class, 'store']);
     Route::match(['delete', 'post'], '/devices/{id?}/delete', [DeviceController::class, 'destroy']);
 
-    // التتبع الجغرافي والنطاقات الآمنة
+    // التتبع الجغرافي والنطاقات الآمنة (P2.4)
     Route::get('/location/current', [LocationController::class, 'current']);
     Route::post('/location', [LocationController::class, 'store']);
     Route::get('/location/history', [LocationController::class, 'history']);
+    Route::get('/location/sharing', [LocationController::class, 'sharingStatus']);
+    Route::match(['put', 'post'], '/location/sharing', [LocationController::class, 'setSharing']);
     Route::get('/location/safe-zones', [LocationController::class, 'getSafeZones']);
+    Route::post('/location/safe-zones', [LocationController::class, 'storeSafeZone']);
+    Route::match(['put', 'post'], '/location/safe-zones/{id}', [LocationController::class, 'updateSafeZone']);
+    Route::match(['delete', 'post'], '/location/safe-zones/{id}/delete', [LocationController::class, 'destroySafeZone']);
+    Route::post('/location/safe-zones/{id}/approve', [LocationController::class, 'approveSafeZone']);
+    Route::post('/location/safe-zones/{id}/reject', [LocationController::class, 'rejectSafeZone']);
 
     // الإشعارات (P2.3: list + create + mark-read; no FCM)
     Route::get('/notifications', [NotificationController::class, 'index']);

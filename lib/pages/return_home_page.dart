@@ -73,6 +73,7 @@ class _ReturnHomePageState extends State<ReturnHomePage> {
                 elderlyId: seniorId,
                 latitude: pos.latitude,
                 longitude: pos.longitude,
+                accuracyMeters: pos.accuracy,
                 location: 'الموقع المباشر: ${_currentLat!.toStringAsFixed(4)}, ${_currentLng!.toStringAsFixed(4)}',
               );
             } catch (_) {}

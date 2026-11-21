@@ -960,11 +960,13 @@ class ApiService {
   }
 
   /// تحديث الموقع الجغرافي لكبير السن في جدول location_tracking
+  /// [accuracyMeters] = دقة GPS الأفقية الحقيقية بالمتر (لا تُختلق).
   Future<Map<String, dynamic>> updateLocation({
     required int elderlyId,
     required double latitude,
     required double longitude,
     String location = '',
+    double? accuracyMeters,
   }) async {
     return _sendRequest({
       'action': 'update_location',
@@ -972,6 +974,77 @@ class ApiService {
       'latitude': latitude,
       'Longitude': longitude,
       'E_Location': location,
+      if (accuracyMeters != null) 'accuracy_meters': accuracyMeters,
+      if (accuracyMeters != null) 'L_AccuracyMeters': accuracyMeters,
+    });
+  }
+
+  /// P2.4 — حالة موافقة مشاركة الموقع (خادم).
+  Future<Map<String, dynamic>> getLocationSharing({int? elderlyId}) async {
+    final body = <String, dynamic>{'action': 'get_location_sharing'};
+    if (elderlyId != null) body['Elderly_ID'] = elderlyId;
+    final res = await _sendRequest(body);
+    if (res['status'] == 'success' && res['data'] is Map) {
+      return Map<String, dynamic>.from(res['data'] as Map);
+    }
+    return res;
+  }
+
+  /// P2.4 — تفعيل/إيقاف مشاركة الموقع (كبير السن فقط).
+  Future<Map<String, dynamic>> setLocationSharing({
+    required bool enabled,
+    int? elderlyId,
+  }) async {
+    return _sendRequest({
+      'action': 'set_location_sharing',
+      'location_sharing_enabled': enabled,
+      if (elderlyId != null) 'Elderly_ID': elderlyId,
+    });
+  }
+
+  /// P2.4-B — جلب المناطق الآمنة.
+  Future<List<Map<String, dynamic>>> getSafeZones({int? elderlyId}) async {
+    final body = <String, dynamic>{'action': 'get_safe_zones'};
+    if (elderlyId != null) body['Elderly_ID'] = elderlyId;
+    final res = await _sendRequest(body);
+    return listDataOrEmpty(res);
+  }
+
+  Future<Map<String, dynamic>> createSafeZone({
+    required String name,
+    required double latitude,
+    required double longitude,
+    required int radiusMeters,
+    int? elderlyId,
+  }) async {
+    return _sendRequest({
+      'action': 'add_safe_zone',
+      'name': name,
+      'center_lat': latitude,
+      'center_lng': longitude,
+      'radius_meters': radiusMeters,
+      if (elderlyId != null) 'Elderly_ID': elderlyId,
+    });
+  }
+
+  Future<Map<String, dynamic>> approveSafeZone(int zoneId) async {
+    return _sendRequest({
+      'action': 'approve_safe_zone',
+      'Zone_ID': zoneId,
+    });
+  }
+
+  Future<Map<String, dynamic>> rejectSafeZone(int zoneId) async {
+    return _sendRequest({
+      'action': 'reject_safe_zone',
+      'Zone_ID': zoneId,
+    });
+  }
+
+  Future<Map<String, dynamic>> deleteSafeZone(int zoneId) async {
+    return _sendRequest({
+      'action': 'delete_safe_zone',
+      'Zone_ID': zoneId,
     });
   }
 

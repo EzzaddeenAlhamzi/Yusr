@@ -17,25 +17,55 @@ import 'package:yusr1/core/widgets/yusr_map_view.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  group('P2.4 OsmTileProvider', () {
+  group('P2.4 OsmTileProvider (CARTO Free)', () {
     tearDown(() {
       OsmTileProvider.overrideUrlTemplate = null;
+      OsmTileProvider.overrideApiKey = null;
     });
 
-    test('uses legitimate OSM-derived tiles (not OSMF public CDN)', () {
-      expect(OsmTileProvider.urlTemplate, contains('{z}'));
-      expect(OsmTileProvider.urlTemplate, contains('{x}'));
-      expect(OsmTileProvider.urlTemplate, contains('{y}'));
-      expect(OsmTileProvider.urlTemplate, isNot(contains('tile.openstreetmap.org')));
-      expect(OsmTileProvider.urlTemplate, contains('openstreetmap.fr'));
-      expect(OsmTileProvider.fallbackUrl, contains('cartocdn.com'));
+    test('missing key → empty URL + Arabic config error (no silent tiles)', () {
+      OsmTileProvider.overrideApiKey = '';
+      expect(OsmTileProvider.hasApiKey, isFalse);
+      expect(OsmTileProvider.urlTemplate, isEmpty);
+      expect(OsmTileProvider.fallbackUrl, isNull);
+      expect(
+        OsmTileProvider.missingKeyErrorArabic,
+        contains('CARTO'),
+      );
+      expect(
+        OsmTileProvider.missingKeyErrorArabic,
+        contains('YUSR_CARTO_API_KEY'),
+      );
+    });
+
+    test('key present builds CARTO URL without OSM France', () {
+      // Fake test key — not a real secret.
+      OsmTileProvider.overrideApiKey = 'test-carto-key';
+      expect(OsmTileProvider.hasApiKey, isTrue);
+      final url = OsmTileProvider.urlTemplate;
+      expect(url, contains('basemaps.cartocdn.com'));
+      expect(url, contains('rastertiles/voyager'));
+      expect(url, contains('{z}'));
+      expect(url, contains('{x}'));
+      expect(url, contains('{y}'));
+      expect(url, contains('key=test-carto-key'));
+      expect(url, isNot(contains('openstreetmap.fr')));
+      expect(url, isNot(contains('tile.openstreetmap.org')));
+      expect(OsmTileProvider.fallbackUrl, isNull);
       expect(OsmTileProvider.attributionText.toLowerCase(), contains('openstreetmap'));
+      expect(OsmTileProvider.attributionText.toUpperCase(), contains('CARTO'));
       expect(OsmTileProvider.httpUserAgent, contains('YusrMobile'));
-      expect(OsmTileProvider.userAgentPackageName, isNotEmpty);
       expect(
         OsmTileProvider.tileLoadErrorArabic,
         'تعذر تحميل الخريطة، تحقق من اتصال الإنترنت وحاول مرة أخرى',
       );
+    });
+
+    test('provider source does not embed a hardcoded production key', () {
+      // Guard: committed Dart sources must not contain key=<long secret>.
+      final source = File('lib/core/map/osm_tile_provider.dart').readAsStringSync();
+      expect(OsmTileProvider.templateLooksLikeHardcodedSecret(source), isFalse);
+      expect(source, isNot(contains('openstreetmap.fr')));
     });
   });
 
@@ -436,7 +466,32 @@ void main() {
   });
 
   group('P2.4 YusrMapView widget', () {
+    tearDown(() {
+      OsmTileProvider.overrideApiKey = null;
+      OsmTileProvider.overrideUrlTemplate = null;
+    });
+
+    testWidgets('missing CARTO key shows Arabic configuration error',
+        (tester) async {
+      OsmTileProvider.overrideApiKey = '';
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: YusrMapView(
+              latitude: 15.3694,
+              longitude: 44.1910,
+              height: 200,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.text(OsmTileProvider.missingKeyErrorArabic), findsOneWidget);
+      expect(find.textContaining('غير معروف'), findsNothing);
+    });
+
     testWidgets('shows unknown overlay when no coordinates', (tester) async {
+      OsmTileProvider.overrideApiKey = 'test-carto-key';
       await tester.pumpWidget(
         const MaterialApp(
           home: Scaffold(
@@ -454,6 +509,7 @@ void main() {
     });
 
     testWidgets('tile failure shows Arabic error and retry', (tester) async {
+      OsmTileProvider.overrideApiKey = 'test-carto-key';
       await tester.pumpWidget(
         const MaterialApp(
           home: Scaffold(

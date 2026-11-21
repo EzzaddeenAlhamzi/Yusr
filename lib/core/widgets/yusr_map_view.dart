@@ -8,7 +8,7 @@ import 'package:latlong2/latlong.dart';
 import '../constants/app_colors.dart';
 import '../map/osm_tile_provider.dart';
 
-/// P2.4 — real interactive geographic map (OSM-derived tiles via flutter_map).
+/// P2.4 — real interactive geographic map (CARTO Free tiles via flutter_map).
 /// Never uses decorative fake painters as the map surface.
 /// Tile success is independent of GPS success.
 class YusrMapView extends StatefulWidget {
@@ -66,6 +66,8 @@ class _YusrMapViewState extends State<YusrMapView> {
   int _tileRetryGeneration = 0;
   late final NetworkTileProvider _tileProvider =
       OsmTileProvider.createNetworkTileProvider();
+
+  bool get _missingKey => !OsmTileProvider.hasApiKey;
 
   @override
   void initState() {
@@ -141,80 +143,98 @@ class _YusrMapViewState extends State<YusrMapView> {
         borderRadius: BorderRadius.circular(18),
         child: Stack(
           children: [
-            FlutterMap(
-              key: ValueKey('yusr-map-tiles-$_tileRetryGeneration'),
-              mapController: _controller,
-              options: MapOptions(
-                initialCenter: _center,
-                initialZoom: _hasFix ? 15 : 12,
-                interactionOptions: const InteractionOptions(
-                  flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+            if (!_missingKey)
+              FlutterMap(
+                key: ValueKey('yusr-map-tiles-$_tileRetryGeneration'),
+                mapController: _controller,
+                options: MapOptions(
+                  initialCenter: _center,
+                  initialZoom: _hasFix ? 15 : 12,
+                  interactionOptions: const InteractionOptions(
+                    flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+                  ),
+                  onTap: widget.onTap == null
+                      ? null
+                      : (tap, point) => widget.onTap!(point),
                 ),
-                onTap: widget.onTap == null
-                    ? null
-                    : (tap, point) => widget.onTap!(point),
-              ),
-              children: [
-                TileLayer(
-                  urlTemplate: OsmTileProvider.urlTemplate,
-                  fallbackUrl: OsmTileProvider.fallbackUrl,
-                  subdomains: OsmTileProvider.subdomains,
-                  userAgentPackageName: OsmTileProvider.userAgentPackageName,
-                  tileProvider: _tileProvider,
-                  maxZoom: 19,
-                  errorTileCallback: (tile, error, stackTrace) {
-                    if (mounted && !_tilesFailed) {
-                      setState(() => _tilesFailed = true);
-                    }
-                  },
-                ),
-                if (widget.zones.isNotEmpty)
-                  CircleLayer(
-                    circles: [
-                      for (final z in widget.zones)
+                children: [
+                  TileLayer(
+                    urlTemplate: OsmTileProvider.urlTemplate,
+                    fallbackUrl: OsmTileProvider.fallbackUrl,
+                    subdomains: OsmTileProvider.subdomains,
+                    userAgentPackageName: OsmTileProvider.userAgentPackageName,
+                    tileProvider: _tileProvider,
+                    maxZoom: 19,
+                    errorTileCallback: (tile, error, stackTrace) {
+                      if (mounted && !_tilesFailed) {
+                        setState(() => _tilesFailed = true);
+                      }
+                    },
+                  ),
+                  if (widget.zones.isNotEmpty)
+                    CircleLayer(
+                      circles: [
+                        for (final z in widget.zones)
+                          CircleMarker(
+                            point: z.center,
+                            radius: z.radiusMeters,
+                            useRadiusInMeter: true,
+                            color: z.color,
+                            borderStrokeWidth: z.borderStrokeWidth,
+                            borderColor: z.borderColor,
+                          ),
+                      ],
+                    ),
+                  if (_hasFix &&
+                      widget.accuracyMeters != null &&
+                      widget.accuracyMeters! > 0)
+                    CircleLayer(
+                      circles: [
                         CircleMarker(
-                          point: z.center,
-                          radius: z.radiusMeters,
+                          point: _center,
+                          radius: widget.accuracyMeters!,
                           useRadiusInMeter: true,
-                          color: z.color,
-                          borderStrokeWidth: z.borderStrokeWidth,
-                          borderColor: z.borderColor,
+                          color: const Color(0x332E7D32),
+                          borderStrokeWidth: 1,
+                          borderColor: const Color(0xFF2E7D32),
                         ),
-                    ],
-                  ),
-                if (_hasFix &&
-                    widget.accuracyMeters != null &&
-                    widget.accuracyMeters! > 0)
-                  CircleLayer(
-                    circles: [
-                      CircleMarker(
-                        point: _center,
-                        radius: widget.accuracyMeters!,
-                        useRadiusInMeter: true,
-                        color: const Color(0x332E7D32),
-                        borderStrokeWidth: 1,
-                        borderColor: const Color(0xFF2E7D32),
-                      ),
-                    ],
-                  ),
-                if (_hasFix)
-                  MarkerLayer(
-                    markers: [
-                      Marker(
-                        point: _center,
-                        width: 44,
-                        height: 44,
-                        child: const Icon(
-                          Icons.location_on,
-                          color: Color(0xFFC62828),
-                          size: 40,
+                      ],
+                    ),
+                  if (_hasFix)
+                    MarkerLayer(
+                      markers: [
+                        Marker(
+                          point: _center,
+                          width: 44,
+                          height: 44,
+                          child: const Icon(
+                            Icons.location_on,
+                            color: Color(0xFFC62828),
+                            size: 40,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
+                ],
+              ),
+            if (_missingKey)
+              Positioned.fill(
+                child: Container(
+                  color: const Color(0xFF37474F),
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    OsmTileProvider.missingKeyErrorArabic,
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.cairo(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-              ],
-            ),
-            if (!_hasFix)
+                ),
+              ),
+            if (!_missingKey && !_hasFix)
               Positioned.fill(
                 child: Container(
                   color: Colors.black.withValues(alpha: 0.35),
@@ -233,7 +253,7 @@ class _YusrMapViewState extends State<YusrMapView> {
                   ),
                 ),
               ),
-            if (_tilesFailed)
+            if (!_missingKey && _tilesFailed)
               Positioned.fill(
                 child: Container(
                   color: Colors.black.withValues(alpha: 0.55),
@@ -268,7 +288,7 @@ class _YusrMapViewState extends State<YusrMapView> {
                   ),
                 ),
               ),
-            if (widget.showAttribution && !_tilesFailed)
+            if (widget.showAttribution && !_missingKey && !_tilesFailed)
               Positioned(
                 left: 6,
                 bottom: 4,
@@ -282,22 +302,23 @@ class _YusrMapViewState extends State<YusrMapView> {
                   ),
                 ),
               ),
-            Positioned(
-              top: 10,
-              left: 10,
-              child: Material(
-                color: Colors.white,
-                shape: const CircleBorder(),
-                elevation: 2,
-                child: IconButton(
-                  tooltip: 'توسيط على الموقع',
-                  icon: const Icon(Icons.my_location, color: AppColors.mainColor),
-                  onPressed: _hasFix
-                      ? () => _controller.move(_center, 16)
-                      : null,
+            if (!_missingKey)
+              Positioned(
+                top: 10,
+                left: 10,
+                child: Material(
+                  color: Colors.white,
+                  shape: const CircleBorder(),
+                  elevation: 2,
+                  child: IconButton(
+                    tooltip: 'توسيط على الموقع',
+                    icon: const Icon(Icons.my_location, color: AppColors.mainColor),
+                    onPressed: _hasFix
+                        ? () => _controller.move(_center, 16)
+                        : null,
+                  ),
                 ),
               ),
-            ),
           ],
         ),
       ),

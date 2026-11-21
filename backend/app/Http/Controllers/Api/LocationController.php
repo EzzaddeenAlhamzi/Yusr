@@ -288,6 +288,20 @@ class LocationController extends Controller
             return $gated;
         }
 
+        $actor = YusrAccess::actor($request);
+        $sharing = $this->isSharingEnabled((int) $gated);
+
+        // HIGH-1 / L4: caregivers must not receive zone center/radius while sharing is off.
+        // Elderly owner may still list/manage own zones without sharing enabled.
+        if ($actor instanceof Caregiver && ! $sharing) {
+            return response()->json([
+                'status' => 'success',
+                'sharing_enabled' => false,
+                'message' => 'مشاركة الموقع متوقفة',
+                'data' => [],
+            ]);
+        }
+
         $zones = SafeZone::where('Zldery_ID', $gated)
             ->orderBy('Zone_ID', 'desc')
             ->get()
@@ -296,6 +310,7 @@ class LocationController extends Controller
 
         return response()->json([
             'status' => 'success',
+            'sharing_enabled' => $sharing,
             'data' => $zones,
         ]);
     }

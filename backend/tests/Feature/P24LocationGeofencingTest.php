@@ -11,6 +11,7 @@ use App\Models\ZonePresenceState;
 use App\Services\GeofenceEngine;
 use App\Services\LocationHistoryCleanupService;
 use App\Services\SafeZoneAlertService;
+use App\Support\CaregiverOnlyNotificationEvents;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
@@ -379,5 +380,92 @@ class P24LocationGeofencingTest extends TestCase
             '/api/location/safe-zones/'.$zoneId.'/reject'
         )->assertOk();
         $this->assertSame('rejected', SafeZone::find($zoneId)->approval_status);
+    }
+
+    /** HIGH-1 / L4: CG must not receive zone geometry while sharing is off. */
+    public function test_sharing_off_caregiver_safe_zones_no_geometry_leak(): void
+    {
+        $elderly = $this->makeElderly('771041030');
+        $cg = $this->makeCaregiver('771041031', (int) $elderly->Eldery_ID);
+
+        $this->asActor($elderly)->postJson('/api/location/safe-zones', [
+            'name' => 'المنزل',
+            'center_lat' => 15.3694,
+            'center_lng' => 44.1910,
+            'radius_meters' => 120,
+        ])->assertCreated();
+
+        // Sharing remains default false — elderly can still list own zones.
+        $elZones = $this->asActor($elderly)->getJson('/api/location/safe-zones');
+        $elZones->assertOk();
+        $this->assertCount(1, $elZones->json('data'));
+        $this->assertNotNull($elZones->json('data.0.center_lat'));
+        $this->assertNotNull($elZones->json('data.0.center_lng'));
+        $this->assertNotNull($elZones->json('data.0.radius_meters'));
+
+        // Caregiver must not see lat/lng/radius (empty list + honest message).
+        $cgZones = $this->asActor($cg)->getJson(
+            '/api/location/safe-zones?Elderly_ID='.$elderly->Eldery_ID
+        );
+        $cgZones->assertOk();
+        $this->assertFalse($cgZones->json('sharing_enabled'));
+        $this->assertSame('مشاركة الموقع متوقفة', $cgZones->json('message'));
+        $this->assertSame([], $cgZones->json('data'));
+
+        // Enable sharing → CG can see geometry again.
+        $this->asActor($elderly)->postJson('/api/location/sharing', [
+            'location_sharing_enabled' => true,
+        ])->assertOk();
+        $cgOn = $this->asActor($cg)->getJson(
+            '/api/location/safe-zones?Elderly_ID='.$elderly->Eldery_ID
+        );
+        $cgOn->assertOk();
+        $this->assertCount(1, $cgOn->json('data'));
+        $this->assertEquals(15.3694, (float) $cgOn->json('data.0.center_lat'));
+    }
+
+    /** M-P24-1: elderly cannot list/mark safe_zone_* caregiver alerts. */
+    public function test_elderly_isolated_from_safe_zone_notifications(): void
+    {
+        $elderly = $this->makeElderly('771041032');
+        $cg = $this->makeCaregiver('771041033', (int) $elderly->Eldery_ID);
+
+        $row = Notification::create([
+            'N_Title' => 'خروج من المنطقة الآمنة',
+            'N_Message' => 'غادر كبير السن منطقة «المنزل».',
+            'N_Type' => SafeZoneAlertService::N_TYPE_EXIT,
+            'event_type' => SafeZoneAlertService::EVENT_EXIT,
+            'occurrence_key' => 'zone:1:EXIT:testbucket',
+            'N_Date' => now()->format('Y-m-d'),
+            'N_Time' => now()->format('H:i:s'),
+            'N_Status' => Notification::STATUS_UNREAD,
+            'Caregiver_ID' => $cg->Caregivers_ID,
+            'Eldery_ID' => $elderly->Eldery_ID,
+        ]);
+
+        $this->assertTrue(
+            CaregiverOnlyNotificationEvents::isCaregiverOnly(SafeZoneAlertService::EVENT_EXIT)
+        );
+
+        $elList = $this->asActor($elderly)->getJson('/api/notifications');
+        $elList->assertOk();
+        foreach ($elList->json('data') as $item) {
+            $this->assertFalse(
+                CaregiverOnlyNotificationEvents::isCaregiverOnly($item['event_type'] ?? null)
+            );
+        }
+        $this->assertSame(0, count($elList->json('data')));
+
+        $this->asActor($elderly)
+            ->postJson('/api/notifications/'.$row->Notifications_ID.'/read')
+            ->assertStatus(403);
+
+        $cgList = $this->asActor($cg)->getJson('/api/notifications');
+        $cgList->assertOk();
+        $this->assertGreaterThanOrEqual(1, count($cgList->json('data')));
+        $this->asActor($cg)
+            ->postJson('/api/notifications/'.$row->Notifications_ID.'/read')
+            ->assertOk()
+            ->assertJsonPath('data.N_Status', Notification::STATUS_READ);
     }
 }

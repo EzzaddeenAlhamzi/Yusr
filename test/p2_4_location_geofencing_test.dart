@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yusr1/core/geo/geofence_math.dart';
 import 'package:yusr1/core/map/osm_tile_provider.dart';
+import 'package:yusr1/core/services/auth_service.dart';
 import 'package:yusr1/core/services/location_sharing_service.dart';
 import 'package:yusr1/core/widgets/yusr_map_view.dart';
 
@@ -97,6 +98,31 @@ void main() {
       svc.stopForegroundLoop();
       expect(svc.isForegroundLoopRunning, isFalse);
       await svc.clearLocalState();
+      expect(svc.serverSharingEnabled, isFalse);
+      expect(svc.lastKnownPosition, isNull);
+    });
+
+    test('M-P24-2: sessionCleanupHook clears location sharing state', () async {
+      final svc = LocationSharingService.instance;
+      AuthService.sessionCleanupHook = () => svc.clearLocalState();
+      addTearDown(() {
+        AuthService.sessionCleanupHook = null;
+      });
+
+      // Simulate leftover in-memory sharing flag from a prior session.
+      svc.stopForegroundLoop();
+      await svc.clearLocalState();
+      expect(svc.serverSharingEnabled, isFalse);
+
+      var hookRan = false;
+      AuthService.sessionCleanupHook = () async {
+        hookRan = true;
+        await svc.clearLocalState();
+      };
+
+      await AuthService.sessionCleanupHook?.call();
+      expect(hookRan, isTrue);
+      expect(svc.isForegroundLoopRunning, isFalse);
       expect(svc.serverSharingEnabled, isFalse);
       expect(svc.lastKnownPosition, isNull);
     });

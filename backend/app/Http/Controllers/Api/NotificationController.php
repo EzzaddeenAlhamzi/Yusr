@@ -6,7 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Caregiver;
 use App\Models\Elderly;
 use App\Models\Notification;
-use App\Services\CaregiverOverdueAlertService;
+use App\Support\CaregiverOnlyNotificationEvents;
 use App\Support\YusrAccess;
 use Illuminate\Http\Request;
 
@@ -44,12 +44,12 @@ class NotificationController extends Controller
             if ($requestedEl !== null && $requestedEl !== $elderlyId) {
                 return YusrAccess::forbidden('غير مصرح بعرض إشعارات كبير سن آخر');
             }
-            // M-1: elderly must not list caregiver-only Channel B overdue alerts
-            // (those rows also set Eldery_ID for linkage context).
+            // M-1 / M-P24-1: elderly must not list caregiver-only alerts
+            // (overdue + safe_zone_*). Those rows also set Eldery_ID for context.
             $query->where('Eldery_ID', $elderlyId)
                 ->where(function ($q) {
                     $q->whereNull('event_type')
-                        ->orWhere('event_type', '!=', CaregiverOverdueAlertService::EVENT_TYPE);
+                        ->orWhereNotIn('event_type', CaregiverOnlyNotificationEvents::types());
                 });
         }
 
@@ -177,9 +177,11 @@ class NotificationController extends Controller
                 return YusrAccess::forbidden('غير مصرح بتحديث إشعار مقدم رعاية آخر');
             }
         } else {
-            // M-1: caregiver-only overdue alerts are not markable by elderly
+            // M-1 / M-P24-1: caregiver-only alerts are not markable by elderly
             // even when Eldery_ID matches for fan-out context.
-            if ((string) $notification->event_type === CaregiverOverdueAlertService::EVENT_TYPE) {
+            if (CaregiverOnlyNotificationEvents::isCaregiverOnly(
+                $notification->event_type !== null ? (string) $notification->event_type : null
+            )) {
                 return YusrAccess::forbidden('غير مصرح بتحديث تنبيه مخصص لمقدم الرعاية');
             }
             if ((int) $notification->Eldery_ID !== (int) $actor->Eldery_ID) {

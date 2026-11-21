@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import 'auth_service.dart';
+import 'location_sharing_service.dart';
 import 'token_storage.dart';
 
 /// خدمة الاتصال بقاعدة البيانات المحلية MySQL/phpMyAdmin عبر واجهة PHP و PDO
@@ -56,6 +57,9 @@ class ApiService {
     _hooksWired = true;
     AuthService.remoteLogoutHook = logoutRemote;
     AuthService.meFetcher = fetchCurrentUser;
+    // P2.4 M-P24-2 — clear foreground location sharing on logout / account switch.
+    AuthService.sessionCleanupHook =
+        () => LocationSharingService.instance.clearLocalState();
   }
 
   /// Public alias for cold-start bootstrap.

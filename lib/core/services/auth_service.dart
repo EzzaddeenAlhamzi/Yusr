@@ -49,6 +49,11 @@ class AuthService extends ChangeNotifier {
   /// Returns true when server revocation succeeded or token was already gone.
   static Future<bool> Function()? remoteLogoutHook;
 
+  /// Optional local cleanup on logout / hard account switch (P2.4 M-P24-2).
+  /// Wired by ApiService to [LocationSharingService.clearLocalState] without
+  /// creating an AuthService ↔ LocationSharingService import cycle.
+  static Future<void> Function()? sessionCleanupHook;
+
   /// Optional `/me` fetcher (set by ApiService).
   static Future<Map<String, dynamic>> Function()? meFetcher;
 
@@ -199,6 +204,10 @@ class AuthService extends ChangeNotifier {
       try {
         await LocalNotificationService.instance.cancelAll();
       } catch (_) {}
+      // Stop prior user's foreground location sharing before clearing session.
+      try {
+        await sessionCleanupHook?.call();
+      } catch (_) {}
       await clearUserScopedCaches(includePerUserModeKeys: true);
       SeniorManager().clear();
       clearSessionLocal();
@@ -347,6 +356,10 @@ class AuthService extends ChangeNotifier {
     try {
       await LocalNotificationService.instance.cancelAll();
     } catch (_) {}
+    // P2.4 M-P24-2 — stop GPS publish loop / local sharing cache while userId known.
+    try {
+      await sessionCleanupHook?.call();
+    } catch (_) {}
     await TokenStorage.instance.clear();
     await clearUserScopedCaches();
     clearSessionLocal();
@@ -359,5 +372,6 @@ class AuthService extends ChangeNotifier {
     _isRestoring = false;
     remoteLogoutHook = null;
     meFetcher = null;
+    sessionCleanupHook = null;
   }
 }

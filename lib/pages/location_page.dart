@@ -1,9 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../core/constants/app_colors.dart';
+import '../core/location/location_alert_category.dart';
+import '../core/location/location_freshness.dart';
 import '../core/widgets/custom_app_bar.dart';
 import '../core/widgets/senior_selector_widget.dart';
+import '../core/widgets/yusr_map_view.dart';
 import '../core/services/senior_manager.dart';
 import '../core/services/api_service.dart';
 
@@ -21,20 +27,36 @@ class _LocationPageState extends State<LocationPage> {
   String _currentLocationName = '';
   double? _latitude;
   double? _longitude;
-  bool _isLiveLocation = false;
-  bool _hasActiveEmergency = false;
-  String _emergencyDetails = '';
+  double? _accuracyMeters;
+  bool _sharingEnabled = true;
+  bool _sharingStopped = false;
+  String _freshness = LocationFreshness.unknown;
+  DateTime? _capturedAt;
+  /// A = manual SOS · B = safe-zone EXIT · C = ENTER (informational).
+  bool _hasActiveSos = false;
+  String _sosDetails = '';
+  bool _hasZoneExit = false;
+  String _zoneExitTitle = '';
+  String _zoneExitDetails = '';
+  String _zoneExitTime = '';
   List<Map<String, String>> _movementHistory = [];
+  List<YusrMapZone> _zones = [];
+  Timer? _freshnessTicker;
 
   @override
   void initState() {
     super.initState();
     _loadLocationData();
     SeniorManager().addListener(_onSeniorChanged);
+    // Age labels without waiting for a new API payload.
+    _freshnessTicker = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted && _capturedAt != null) setState(() {});
+    });
   }
 
   @override
   void dispose() {
+    _freshnessTicker?.cancel();
     SeniorManager().removeListener(_onSeniorChanged);
     super.dispose();
   }
@@ -50,80 +72,144 @@ class _LocationPageState extends State<LocationPage> {
     setState(() => _isLoading = true);
 
     try {
+      // Sharing status (honest caregiver message when stopped).
+      Map<String, dynamic> sharing = {};
+      try {
+        sharing =
+            await ApiService.instance.getLocationSharing(elderlyId: seniorId);
+      } catch (_) {}
+
       final loc = await ApiService.instance.getLocation(elderlyId: seniorId);
       final history =
           await ApiService.instance.getLocationHistory(elderlyId: seniorId);
       final notifs =
           await ApiService.instance.getNotifications(elderlyId: seniorId);
+      List<Map<String, dynamic>> zones = [];
+      try {
+        zones = await ApiService.instance.getSafeZones(elderlyId: seniorId);
+      } catch (_) {}
 
-      // فحص بلاغات الطوارئ الحديثة
-      final emergencyNotif = notifs.firstWhere(
-        (n) =>
-            (n['N_Type'] ?? '').toString().contains('طوارئ') ||
-            (n['N_Message'] ?? '').toString().contains('استغاثة') ||
-            (n['N_Message'] ?? '').toString().contains('طوارئ') ||
-            (n['N_Status'] ?? '').toString() == 'Active',
-        orElse: () => {},
-      );
-
-      final hasEmerg = emergencyNotif.isNotEmpty;
-      final emergMsg = emergencyNotif['N_Message']?.toString() ??
-          'تم استلام إشارة طوارئ من كبير السن!';
+      final classified = _classifyLocationAlerts(notifs);
 
       if (mounted) {
         double? lat;
         double? lng;
+        double? acc;
         String updateTime = '';
-        bool isLive = false;
+        DateTime? capturedAt;
+        String freshness = LocationFreshness.unknown;
+        final sharingKnown = sharing.containsKey('location_sharing_enabled') ||
+            sharing.containsKey('sharing_enabled');
+        final sharingOn = !sharingKnown
+            ? true
+            : (sharing['location_sharing_enabled'] == true ||
+                sharing['sharing_enabled'] == true);
 
         if (loc != null && loc is Map) {
-          lat = double.tryParse(loc['L_Latitude']?.toString() ?? '');
-          lng = double.tryParse(loc['L_Longitude']?.toString() ?? '');
-          updateTime = loc['L_UpdateTime']?.toString() ??
+          lat = double.tryParse(loc['L_Latitude']?.toString() ??
+              loc['latitude']?.toString() ??
+              '');
+          lng = double.tryParse(loc['L_Longitude']?.toString() ??
+              loc['longitude']?.toString() ??
+              loc['Longitude']?.toString() ??
+              '');
+          acc = double.tryParse(loc['L_AccuracyMeters']?.toString() ??
+              loc['accuracy_meters']?.toString() ??
+              '');
+          updateTime = loc['observed_at_utc']?.toString() ??
+              loc['L_UpdateTime']?.toString() ??
               loc['created_at']?.toString() ??
               '';
+          // Authoritative observation time (UTC ISO or UTC-naive Laravel).
+          capturedAt = LocationFreshness.parseObservationTime(updateTime);
+          // Always derive from timestamp — never prefer a stale server enum.
+          freshness = LocationFreshness.resolve(
+            capturedAt: capturedAt,
+            serverFreshness: loc['freshness']?.toString(),
+            sharingStoppedFlag: sharingKnown && !sharingOn,
+            hasCoordinates: lat != null && lng != null,
+          );
+        } else if (!sharingOn && sharingKnown) {
+          freshness = LocationFreshness.sharingStopped;
+        } else {
+          freshness = LocationFreshness.noData;
+        }
 
-          // التحقق مما إذا كان الموقع حديثاً (مباشر) أم موقع أخير معروف
-          isLive = _checkIfLive(updateTime, loc['Status']?.toString());
+        final mapZones = <YusrMapZone>[];
+        for (final z in zones) {
+          if ((z['approval_status']?.toString() ?? '') != 'approved') continue;
+          if (z['is_active'] == false) continue;
+          final zLat = double.tryParse(
+            (z['center_lat'] ?? z['latitude'])?.toString() ?? '',
+          );
+          final zLng = double.tryParse(
+            (z['center_lng'] ?? z['longitude'])?.toString() ?? '',
+          );
+          final zR = double.tryParse(
+            (z['radius_meters'] ?? z['Z_Limit'])?.toString() ?? '',
+          );
+          if (zLat == null || zLng == null || zR == null) continue;
+          mapZones.add(YusrMapZone(
+            center: LatLng(zLat, zLng),
+            radiusMeters: zR,
+            label: z['Z_Name']?.toString() ?? z['name']?.toString(),
+          ));
         }
 
         setState(() {
-          _latitude = lat;
-          _longitude = lng;
-          _isLiveLocation = isLive;
-          _hasActiveEmergency = hasEmerg;
-          _emergencyDetails = emergMsg;
+          _sharingEnabled = sharingOn;
+          _sharingStopped = sharingKnown && !sharingOn;
+          _latitude = _sharingStopped ? null : lat;
+          _longitude = _sharingStopped ? null : lng;
+          _accuracyMeters = _sharingStopped ? null : acc;
+          _capturedAt = _sharingStopped ? null : capturedAt;
+          _freshness = _sharingStopped
+              ? LocationFreshness.sharingStopped
+              : freshness;
+          _hasActiveSos = classified.sos;
+          _sosDetails = classified.sosDetails;
+          _hasZoneExit = classified.zoneExit;
+          _zoneExitTitle = classified.zoneExitTitle;
+          _zoneExitDetails = classified.zoneExitDetails;
+          _zoneExitTime = classified.zoneExitTime;
+          _zones = mapZones;
 
-          if (lat != null && lng != null) {
+          if (_sharingStopped) {
+            _currentLocationName = 'مشاركة الموقع متوقفة';
+            _lastUpdatedTime = '—';
+          } else if (lat != null && lng != null) {
             _currentLocationName =
                 'خط العرض: ${lat.toStringAsFixed(4)} ، خط الطول: ${lng.toStringAsFixed(4)}';
-            _lastUpdatedTime =
-                updateTime.isNotEmpty ? updateTime : 'الآن تقريباً';
+            _lastUpdatedTime = LocationFreshness.formatArabicDateTime(capturedAt);
           } else {
-            _currentLocationName = senior.location.isNotEmpty &&
-                    senior.location != 'الموقع غير محدد'
-                ? senior.location
-                : 'لا توجد إحداثيات GPS مسجلة حالياً';
+            _currentLocationName = 'لا توجد بيانات موقع';
             _lastUpdatedTime = 'غير متوفر';
-            _isLiveLocation = false;
+            _freshness = LocationFreshness.noData;
           }
 
-          _movementHistory = history.map((h) {
-            final hLat = h['L_Latitude']?.toString() ?? '';
-            final hLng = h['L_Longitude']?.toString() ?? '';
-            final hTime = h['L_UpdateTime']?.toString() ??
-                h['created_at']?.toString() ??
-                '';
-            final scor = h['L_Scor']?.toString() ?? '100';
-            return {
-              'location': (hLat.isNotEmpty && hLng.isNotEmpty)
-                  ? 'إحداثيات: $hLat, $hLng'
-                  : 'موقع مسجل',
-              'time': hTime.isNotEmpty ? hTime : 'سجل سابق',
-              'status': 'دقة الإشارة: $scor%',
-              'icon': '📍',
-            };
-          }).toList();
+          _movementHistory = _sharingStopped
+              ? []
+              : history.map((h) {
+                  final hLat = h['L_Latitude']?.toString() ?? '';
+                  final hLng = h['L_Longitude']?.toString() ?? '';
+                  final hTimeRaw = h['observed_at_utc']?.toString() ??
+                      h['L_UpdateTime']?.toString() ??
+                      h['created_at']?.toString() ??
+                      '';
+                  final hDt = LocationFreshness.parseObservationTime(hTimeRaw);
+                  final accM = h['L_AccuracyMeters'] ?? h['accuracy_meters'];
+                  final status = accM != null
+                      ? 'دقة: $accM م'
+                      : 'دقة: غير متوفرة';
+                  return {
+                    'location': (hLat.isNotEmpty && hLng.isNotEmpty)
+                        ? 'إحداثيات: $hLat, $hLng'
+                        : 'موقع مسجل',
+                    'time': LocationFreshness.formatArabicDateTime(hDt),
+                    'status': status,
+                    'icon': '📍',
+                  };
+                }).toList();
         });
       }
     } catch (e) {
@@ -144,18 +230,80 @@ class _LocationPageState extends State<LocationPage> {
     }
   }
 
-  bool _checkIfLive(String? timeStr, String? status) {
-    if (status == 'Active' || status == 'Live') return true;
-    if (timeStr == null || timeStr.isEmpty) return false;
-    try {
-      final dt = DateTime.tryParse(timeStr);
-      if (dt != null) {
-        final diff = DateTime.now().difference(dt);
-        // إذا كان التحديث خلال آخر 20 دقيقة نعتبره مباشر
-        return diff.inMinutes.abs() <= 20;
+  /// Split SOS (A) from geofence EXIT (B) / ENTER (C). Never escalate EXIT to SOS.
+  ({
+    bool sos,
+    String sosDetails,
+    bool zoneExit,
+    String zoneExitTitle,
+    String zoneExitDetails,
+    String zoneExitTime,
+  }) _classifyLocationAlerts(List<dynamic> notifs) {
+    bool sos = false;
+    String sosDetails = '';
+    bool zoneExit = false;
+    String zoneExitTitle = 'تنبيه: خروج من المنطقة الآمنة';
+    String zoneExitDetails = '';
+    String zoneExitTime = '';
+
+    for (final raw in notifs) {
+      if (raw is! Map) continue;
+      final n = Map<String, dynamic>.from(raw);
+      final title = (n['N_Title'] ?? '').toString();
+      final msg = (n['N_Message'] ?? '').toString();
+      final status = (n['N_Status'] ?? '').toString();
+      // Server uses Arabic «غير مقروء» (Notification::STATUS_UNREAD).
+      final unread = status == 'unread' ||
+          status == 'Unread' ||
+          status == 'جديد' ||
+          status == 'غير مقروء' ||
+          status == 'Active' ||
+          status.isEmpty;
+      final kind = LocationAlertCategory.classify(
+        eventType: n['event_type']?.toString(),
+        nType: n['N_Type']?.toString(),
+        title: title,
+        message: msg,
+      );
+
+      if (kind == LocationAlertCategory.zoneExit && unread && !zoneExit) {
+        zoneExit = true;
+        final zoneName = _extractZoneName(title, msg);
+        zoneExitTitle = zoneName.isEmpty
+            ? 'تنبيه: خروج من المنطقة الآمنة'
+            : 'تنبيه: خروج من المنطقة الآمنة — $zoneName';
+        zoneExitDetails = msg.isNotEmpty
+            ? msg
+            : 'غادر كبير السن المنطقة الآمنة. ليست بلاغ طوارئ تلقائي.';
+        final t = n['created_at']?.toString() ??
+            '${n['N_Date'] ?? ''} ${n['N_Time'] ?? ''}'.trim();
+        zoneExitTime = LocationFreshness.formatArabicDateTime(
+          DateTime.tryParse(t),
+        );
+      } else if (kind == LocationAlertCategory.sos && unread && !sos) {
+        sos = true;
+        sosDetails = msg.isNotEmpty
+            ? msg
+            : 'تم استلام بلاغ طوارئ يدوي من كبير السن.';
       }
-    } catch (_) {}
-    return true; // في حال تعذر التحليل نعتمد على توفر الإحداثية
+    }
+
+    return (
+      sos: sos,
+      sosDetails: sosDetails,
+      zoneExit: zoneExit,
+      zoneExitTitle: zoneExitTitle,
+      zoneExitDetails: zoneExitDetails,
+      zoneExitTime: zoneExitTime,
+    );
+  }
+
+  String _extractZoneName(String title, String msg) {
+    final fromMsg = RegExp(r'«([^»]+)»').firstMatch(msg);
+    if (fromMsg != null) return fromMsg.group(1)!.trim();
+    final fromTitle = RegExp(r'—\s*(.+)$').firstMatch(title);
+    if (fromTitle != null) return fromTitle.group(1)!.trim();
+    return '';
   }
 
   Future<void> _openGoogleMaps({bool isEmergency = false}) async {
@@ -245,13 +393,18 @@ class _LocationPageState extends State<LocationPage> {
                     const SeniorSelectorWidget(showAddButton: false),
                     const SizedBox(height: 12),
 
-                    // 1. كارت بلاغ الطوارئ (عند وجود طوارئ نشطة)
-                    if (_hasActiveEmergency) ...[
+                    // 1a. Manual SOS only (category A) — never for geofence EXIT.
+                    if (_hasActiveSos) ...[
                       _buildEmergencyAlertBanner(),
                       const SizedBox(height: 12),
                     ],
+                    // 1b. Safe-zone EXIT (category B) — separate from SOS.
+                    if (_hasZoneExit) ...[
+                      _buildZoneExitBanner(),
+                      const SizedBox(height: 12),
+                    ],
 
-                    // 2. شريط التمييز بين (الموقع الحالي المباشر) و(الموقع الأخير المعروف)
+                    // 2. Honest foreground-only freshness (no live-tracking claims)
                     _buildLocationStatusBanner(),
                     const SizedBox(height: 12),
 
@@ -289,7 +442,7 @@ class _LocationPageState extends State<LocationPage> {
     );
   }
 
-  // ==================== بانر طوارئ نشط ====================
+  // ==================== بانر طوارئ يدوي (SOS) فقط ====================
   Widget _buildEmergencyAlertBanner() {
     return Container(
       width: double.infinity,
@@ -335,9 +488,9 @@ class _LocationPageState extends State<LocationPage> {
           ),
           const SizedBox(height: 6),
           Text(
-            _emergencyDetails.isNotEmpty
-                ? _emergencyDetails
-                : 'تم استلام طلب نجدة أو تنبيه طوارئ. توجه إلى الموقع فوراً.',
+            _sosDetails.isNotEmpty
+                ? _sosDetails
+                : 'تم استلام بلاغ طوارئ يدوي. توجه إلى الموقع فوراً.',
             style: GoogleFonts.cairo(
               fontSize: 12,
               color: const Color(0xFFC62828),
@@ -371,285 +524,220 @@ class _LocationPageState extends State<LocationPage> {
     );
   }
 
-  // ==================== شريط التمييز بين المباشر والأخير المعروف ====================
-  Widget _buildLocationStatusBanner() {
-    final hasCoords = _latitude != null && _longitude != null;
-
-    if (!hasCoords) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF5F5F5),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFE0E0E0)),
-        ),
-        child: Row(
-          children: [
-            const Icon(Icons.location_off_rounded,
-                color: Color(0xFF757575), size: 22),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'الموقع غير متاح: بانتظار استلام إحداثيات GPS حديثة من جهاز كبير السن.',
+  /// Category B — geofence EXIT (not SOS / not auto-emergency).
+  Widget _buildZoneExitBanner() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF8E1),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFF9A825), width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.login_outlined, color: Color(0xFFF57F17), size: 22),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _zoneExitTitle,
+                  style: GoogleFonts.cairo(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: const Color(0xFFE65100),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _zoneExitDetails,
+            style: GoogleFonts.cairo(
+              fontSize: 12,
+              color: const Color(0xFF6D4C41),
+            ),
+          ),
+          if (_zoneExitTime.isNotEmpty && _zoneExitTime != 'غير متوفر') ...[
+            const SizedBox(height: 4),
+            Text(
+              'وقت التنبيه: $_zoneExitTime',
+              style: GoogleFonts.cairo(
+                fontSize: 11,
+                color: const Color(0xFF8D6E63),
+              ),
+            ),
+          ],
+          const SizedBox(height: 4),
+          Text(
+            _sharingStopped || _latitude == null
+                ? 'آخر موقع معروف: غير متاح حاليًا'
+                : 'آخر موقع معروف معروض على الخريطة أدناه',
+            style: GoogleFonts.cairo(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: const Color(0xFF5D4037),
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            height: 44,
+            child: OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFFE65100),
+                side: const BorderSide(color: Color(0xFFF9A825)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              onPressed: () => _openGoogleMaps(isEmergency: false),
+              icon: const Icon(Icons.map_outlined, size: 20),
+              label: Text(
+                'عرض آخر موقع معروف',
                 style: GoogleFonts.cairo(
-                  fontSize: 12,
-                  color: const Color(0xFF616161),
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
             ),
-          ],
-        ),
-      );
-    }
-
-    if (_isLiveLocation) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: const Color(0xFFE8F5E9),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFF4CAF50), width: 1.2),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 12,
-              height: 12,
-              decoration: const BoxDecoration(
-                color: Color(0xFF2E7D32),
-                shape: BoxShape.circle,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'الموقع الحالي المباشر (متصل الآن)',
-                    style: GoogleFonts.cairo(
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                      color: const Color(0xFF1B5E20),
-                    ),
-                  ),
-                  Text(
-                    'يتم استقبال إحداثيات GPS بشكل حي ومباشر.',
-                    style: GoogleFonts.cairo(
-                      fontSize: 11,
-                      color: const Color(0xFF2E7D32),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Icon(Icons.sensors_rounded,
-                color: Color(0xFF2E7D32), size: 22),
-          ],
-        ),
-      );
-    } else {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: const Color(0xFFFFF3E0),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFFF9800), width: 1.2),
-        ),
-        child: Row(
-          children: [
-            const Icon(Icons.sensors_off_rounded,
-                color: Color(0xFFE65100), size: 22),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'الموقع الأخير المعروف (انقطع الاتصال)',
-                    style: GoogleFonts.cairo(
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                      color: const Color(0xFFE65100),
-                    ),
-                  ),
-                  Text(
-                    'تعذر تحديث الإشارة المباشرة. هذا هو آخر موقع مسجل قبل انقطاع الاتصال.',
-                    style: GoogleFonts.cairo(
-                      fontSize: 11,
-                      color: const Color(0xFF8D6E63),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-  }
-
-  // ==================== خريطة الموقع التفاعلية ====================
-  Widget _buildMapContainer() {
-    final hasCoords = _latitude != null && _longitude != null;
-    final pinColor = _isLiveLocation
-        ? const Color(0xFF2E7D32)
-        : (_hasActiveEmergency
-            ? const Color(0xFFE53935)
-            : const Color(0xFFE65100));
-
-    return Container(
-      width: double.infinity,
-      height: 230,
-      decoration: BoxDecoration(
-        color: AppColors.cardColor,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.cardBorderColor, width: 1),
-        boxShadow: const [
-          BoxShadow(
-            color: Colors.black12,
-            blurRadius: 8,
-            offset: Offset(0, 3),
           ),
         ],
       ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(18),
-        child: Stack(
-          children: [
-            // خلفية رسم الخريطة التوضيحية
-            CustomPaint(
-              size: const Size(double.infinity, 230),
-              painter: MapPainter(),
-            ),
+    );
+  }
 
-            // زر التحديث اليدوي داخل الخريطة
-            Positioned(
-              top: 12,
-              right: 12,
-              child: FloatingActionButton.small(
-                heroTag: 'refresh_loc_btn',
-                onPressed: _loadLocationData,
-                backgroundColor: Colors.white,
-                elevation: 3,
-                tooltip: 'تحديث الموقع الآن',
-                child: _isLoading
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: AppColors.mainColor,
-                        ),
-                      )
-                    : const Icon(
-                        Icons.my_location,
-                        color: AppColors.mainColor,
-                        size: 20,
-                      ),
-              ),
-            ),
+  /// Live-derived freshness so banner ages without a new API response.
+  String get _liveFreshnessCode {
+    final sharingOff = _sharingStopped || !_sharingEnabled;
+    return LocationFreshness.resolve(
+      capturedAt: _capturedAt,
+      serverFreshness: _freshness,
+      sharingStoppedFlag: sharingOff,
+      hasCoordinates: _latitude != null && _longitude != null,
+    );
+  }
 
-            // زر التكبير/فتح في خرائط Google مباشرة من الخريطة
-            Positioned(
-              top: 12,
-              left: 12,
-              child: Material(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                elevation: 3,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(20),
-                  onTap: () => _openGoogleMaps(),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 6),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.open_in_new_rounded,
-                            size: 15, color: AppColors.mainColor),
-                        const SizedBox(width: 4),
-                        Text(
-                          'Google Maps',
-                          style: GoogleFonts.cairo(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.mainColor,
-                          ),
-                        ),
-                      ],
-                    ),
+  // ==================== شريط حداثة الموقع (بدون ادّعاء تتبّع حي) ====================
+  Widget _buildLocationStatusBanner() {
+    final sharingOff = _sharingStopped || !_sharingEnabled;
+    final code = _liveFreshnessCode;
+    final isOk = code == LocationFreshness.fresh || code == LocationFreshness.recent;
+    final bg = sharingOff || code == LocationFreshness.stale || code == LocationFreshness.old
+        ? const Color(0xFFFFF3E0)
+        : isOk
+            ? const Color(0xFFE8F5E9)
+            : const Color(0xFFF5F5F5);
+    final border = sharingOff || code == LocationFreshness.stale || code == LocationFreshness.old
+        ? const Color(0xFFFF9800)
+        : isOk
+            ? const Color(0xFF4CAF50)
+            : const Color(0xFFE0E0E0);
+    final fg = sharingOff || code == LocationFreshness.stale || code == LocationFreshness.old
+        ? const Color(0xFFE65100)
+        : isOk
+            ? const Color(0xFF1B5E20)
+            : const Color(0xFF616161);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: border, width: 1.2),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            sharingOff
+                ? Icons.location_disabled_rounded
+                : (_latitude == null
+                    ? Icons.location_off_rounded
+                    : Icons.place_outlined),
+            color: fg,
+            size: 22,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  LocationFreshness.arabicBannerTitle(code),
+                  style: GoogleFonts.cairo(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: fg,
                   ),
                 ),
-              ),
+                Text(
+                  LocationFreshness.arabicBannerSubtitle(code),
+                  style: GoogleFonts.cairo(
+                    fontSize: 11,
+                    color: fg.withValues(alpha: 0.85),
+                  ),
+                ),
+              ],
             ),
-
-            // ماركر الموقع في منتصف الخريطة
-            Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(5),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: pinColor.withValues(alpha: 0.4),
-                          blurRadius: 10,
-                          spreadRadius: 2,
-                        ),
-                      ],
-                    ),
-                    child: Icon(
-                      Icons.location_on,
-                      color: pinColor,
-                      size: 42,
-                    ),
-                  ),
-                  Container(
-                    width: 14,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.black26,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.95),
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Colors.black12,
-                          blurRadius: 4,
-                        ),
-                      ],
-                    ),
-                    child: Text(
-                      hasCoords
-                          ? (_isLiveLocation
-                              ? 'الموقع المباشر الآن'
-                              : 'آخر موقع معروف')
-                          : 'الموقع غير محدد',
-                      style: GoogleFonts.cairo(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: pinColor,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
+    );
+  }
+
+  // ==================== خريطة الموقع التفاعلية (OSM حقيقية) ====================
+  Widget _buildMapContainer() {
+    return Stack(
+      children: [
+        YusrMapView(
+          latitude: _latitude,
+          longitude: _longitude,
+          accuracyMeters: _accuracyMeters,
+          height: 260,
+          zones: _zones,
+        ),
+        Positioned(
+          top: 12,
+          right: 12,
+          child: FloatingActionButton.small(
+            heroTag: 'refresh_loc_btn',
+            onPressed: _loadLocationData,
+            backgroundColor: Colors.white,
+            elevation: 3,
+            tooltip: 'تحديث الموقع الآن',
+            child: _isLoading
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.mainColor,
+                    ),
+                  )
+                : const Icon(
+                    Icons.my_location,
+                    color: AppColors.mainColor,
+                    size: 20,
+                  ),
+          ),
+        ),
+        Positioned(
+          top: 12,
+          left: 56,
+          child: Material(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            child: IconButton(
+              tooltip: 'فتح في خرائط خارجية',
+              onPressed: () => _openGoogleMaps(),
+              icon: const Icon(Icons.open_in_new, color: AppColors.mainColor),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -705,12 +793,41 @@ class _LocationPageState extends State<LocationPage> {
                 style: GoogleFonts.cairo(
                   fontSize: 12,
                   fontWeight: FontWeight.bold,
-                  color: _isLiveLocation
-                      ? const Color(0xFF2E7D32)
-                      : AppColors.mainColor,
+                  color: AppColors.mainColor,
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'الدقة الأفقية:',
+                style: GoogleFonts.cairo(
+                  fontSize: 12,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              Text(
+                _accuracyMeters != null
+                    ? '${_accuracyMeters!.toStringAsFixed(1)} م'
+                    : 'غير متوفرة',
+                style: GoogleFonts.cairo(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.mainColor,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Text(
+              '${LocationFreshness.arabicLabel(_liveFreshnessCode)} · ${LocationFreshness.formatAge(_capturedAt)}',
+              style: GoogleFonts.cairo(fontSize: 11, color: AppColors.textSecondary),
+            ),
           ),
         ],
       ),
@@ -1018,60 +1135,3 @@ class _LocationPageState extends State<LocationPage> {
   }
 }
 
-class MapPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final bgPaint = Paint()..color = const Color(0xFFF2F0EB);
-    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), bgPaint);
-
-    final parkPaint = Paint()..color = const Color(0xFFD4EAD6);
-    final parkPath1 = Path()
-      ..moveTo(size.width * 0.4, size.height * 0.2)
-      ..lineTo(size.width * 0.65, size.height * 0.25)
-      ..lineTo(size.width * 0.6, size.height * 0.5)
-      ..lineTo(size.width * 0.35, size.height * 0.45)
-      ..close();
-    canvas.drawPath(parkPath1, parkPaint);
-
-    final parkPath2 = Path()
-      ..moveTo(size.width * 0.1, size.height * 0.6)
-      ..lineTo(size.width * 0.3, size.height * 0.65)
-      ..lineTo(size.width * 0.25, size.height * 0.9)
-      ..lineTo(size.width * 0.05, size.height * 0.8)
-      ..close();
-    canvas.drawPath(parkPath2, parkPaint);
-
-    final roadPaint = Paint()
-      ..color = Colors.white
-      ..strokeWidth = 14
-      ..style = PaintingStyle.stroke;
-
-    final secondaryRoadPaint = Paint()
-      ..color = const Color(0xFFFFFFFF)
-      ..strokeWidth = 7
-      ..style = PaintingStyle.stroke;
-
-    final mainRoad = Path()
-      ..moveTo(size.width * 0.1, 0)
-      ..lineTo(size.width * 0.7, size.height);
-    canvas.drawPath(mainRoad, roadPaint);
-
-    final crossRoad = Path()
-      ..moveTo(0, size.height * 0.4)
-      ..lineTo(size.width, size.height * 0.4);
-    canvas.drawPath(crossRoad, roadPaint);
-
-    final subRoad1 = Path()
-      ..moveTo(size.width * 0.5, 0)
-      ..lineTo(size.width * 0.9, size.height * 0.8);
-    canvas.drawPath(subRoad1, secondaryRoadPaint);
-
-    final subRoad2 = Path()
-      ..moveTo(0, size.height * 0.7)
-      ..lineTo(size.width, size.height * 0.75);
-    canvas.drawPath(subRoad2, secondaryRoadPaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}

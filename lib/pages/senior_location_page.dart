@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../core/services/auth_service.dart';
@@ -19,6 +20,17 @@ class SeniorLocationPage extends StatelessWidget {
         ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
     final role = args?['role'] ?? 'senior';
     final mode = args?['mode'] ?? 'advanced';
+
+    // P2.4 — request OS while-in-use permission (honest; prefs alone are not enough).
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (serviceEnabled) {
+        var permission = await Geolocator.checkPermission();
+        if (permission == LocationPermission.denied) {
+          permission = await Geolocator.requestPermission();
+        }
+      }
+    } catch (_) {}
 
     try {
       final prefs = await SharedPreferences.getInstance();

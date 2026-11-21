@@ -143,6 +143,38 @@ class SimpleReturnHomePage extends StatelessWidget {
               ),
             ),
 
+            const SizedBox(height: 16),
+            // P2.4 — keep location sharing reachable from simple mode.
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24.0),
+              child: SizedBox(
+                width: double.infinity,
+                height: 56,
+                child: OutlinedButton.icon(
+                  onPressed: () =>
+                      Navigator.pushNamed(context, '/location-elderly'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF125D73),
+                    side: const BorderSide(
+                      color: Color(0xFF125D73),
+                      width: 1.6,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  icon: const Icon(Icons.location_on_rounded, size: 28),
+                  label: Text(
+                    'مشاركة موقعي',
+                    style: GoogleFonts.cairo(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
             const Spacer(),
           ],
         ),

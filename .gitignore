@@ -60,6 +60,9 @@ app.*.map.json
 .env.*
 !.env.example
 !**/.env.example
+# P2.4 CARTO Free API key (use dart_defines.json.example as template).
+dart_defines.json
+**/carto_api_key.local.dart
 *.pem
 !backend/cacert.pem
 *.key

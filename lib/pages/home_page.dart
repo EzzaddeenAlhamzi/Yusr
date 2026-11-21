@@ -15,7 +15,6 @@ import 'emergency_page_elderly.dart';
 import 'health_page.dart';
 import 'medicines_page_elderly.dart';
 import 'profile_page_elderly.dart';
-import 'return_home_page.dart';
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
@@ -519,53 +518,31 @@ class HomePage extends StatelessWidget {
                                   ),
                                   _buildGridCard(
                                     title: 'الموقع',
-                                    customIconWidget: Stack(
-                                      alignment: Alignment.center,
-                                      children: [
-                                        Container(
-                                          width: 66,
-                                          height: 66,
-                                          decoration: BoxDecoration(
-                                            color: const Color(
-                                              0xFF1B6B7A,
-                                            ).withValues(alpha: 0.12),
-                                            shape: BoxShape.circle,
-                                            border: Border.all(
-                                              color: const Color(0xFF1B6B7A),
-                                              width: 2,
-                                            ),
-                                          ),
-                                          child: const Icon(
-                                            Icons.home_rounded,
-                                            size: 40,
-                                            color: Color(0xFF1B6B7A),
-                                          ),
+                                    // P2.4 — primary location surface is sharing/map,
+                                    // not the legacy return-home page.
+                                    customIconWidget: Container(
+                                      width: 66,
+                                      height: 66,
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF1B6B7A)
+                                            .withValues(alpha: 0.12),
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                          color: const Color(0xFF1B6B7A),
+                                          width: 2,
                                         ),
-                                        Positioned(
-                                          bottom: 0,
-                                          right: 0,
-                                          child: Container(
-                                            padding: const EdgeInsets.all(4),
-                                            decoration: const BoxDecoration(
-                                              color: Color(0xFF1B6B7A),
-                                              shape: BoxShape.circle,
-                                            ),
-                                            child: const Icon(
-                                              Icons.location_on_rounded,
-                                              size: 15,
-                                              color: Colors.white,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
+                                      ),
+                                      child: const Icon(
+                                        Icons.location_on_rounded,
+                                        size: 40,
+                                        color: Color(0xFF1B6B7A),
+                                      ),
                                     ),
                                     onTap: () {
-                                      Navigator.push(
+                                      // P2.4 primary surface: sharing consent + GPS + map/zones.
+                                      Navigator.pushNamed(
                                         context,
-                                        MaterialPageRoute(
-                                          builder: (context) =>
-                                              const ReturnHomePage(),
-                                        ),
+                                        '/location-elderly',
                                       );
                                     },
                                   ),

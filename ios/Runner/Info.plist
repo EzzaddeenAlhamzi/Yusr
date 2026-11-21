@@ -45,5 +45,7 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>يحتاج يُسر إلى موقعك أثناء استخدام التطبيق لمشاركته مع المرافق المرتبط عند موافقتك الصريحة. لا يتم التتبع في الخلفية في هذا الإصدار.</string>
 </dict>
 </plist>

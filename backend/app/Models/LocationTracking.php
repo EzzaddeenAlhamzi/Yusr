@@ -19,6 +19,7 @@ class LocationTracking extends Model
         'L_Longitude',
         'L_UpdateTime',
         'L_Scor',
+        'L_AccuracyMeters',
         'Elderly_ID',
     ];
 

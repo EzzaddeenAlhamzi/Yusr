@@ -22,6 +22,11 @@ class Elderly extends Authenticatable
         'E_PhonNumber',
         'E_Email',
         'E_Password',
+        'location_sharing_enabled',
+    ];
+
+    protected $casts = [
+        'location_sharing_enabled' => 'boolean',
     ];
 
     protected $hidden = [

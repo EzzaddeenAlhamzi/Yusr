@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../core/location/elderly_location_observation.dart';
 import '../core/location/location_freshness.dart';
 import '../core/services/api_service.dart';
 import '../core/services/auth_service.dart';
@@ -61,7 +62,7 @@ class _LocationPageElderlyState extends State<LocationPageElderly> {
           _lat = pos.latitude;
           _lng = pos.longitude;
           _accuracyM = pos.accuracy;
-          _updatedAt = DateTime.now();
+          // Do not invent wall-clock observation time — server UTC wins below.
         }
       }
       await _loadLastKnownFromServer();
@@ -82,25 +83,17 @@ class _LocationPageElderlyState extends State<LocationPageElderly> {
     try {
       final loc = await ApiService.instance.getLocation(elderlyId: elderlyId);
       if (loc is Map) {
-        final lat = double.tryParse(
-          (loc['L_Latitude'] ?? loc['latitude'])?.toString() ?? '',
+        final merged = ElderlyLocationServerSnapshot.mergeFromServer(
+          loc: Map<dynamic, dynamic>.from(loc),
+          previousLat: _lat,
+          previousLng: _lng,
+          previousAccuracyM: _accuracyM,
+          previousUpdatedAt: _updatedAt,
         );
-        final lng = double.tryParse(
-          (loc['L_Longitude'] ?? loc['longitude'] ?? loc['Longitude'])
-                  ?.toString() ??
-              '',
-        );
-        final acc = double.tryParse(
-          (loc['L_AccuracyMeters'] ?? loc['accuracy_meters'])?.toString() ??
-              '',
-        );
-        final t = loc['L_UpdateTime']?.toString();
-        if (lat != null && lng != null) {
-          _lat = lat;
-          _lng = lng;
-          _accuracyM = acc;
-          _updatedAt = t != null ? DateTime.tryParse(t) : _updatedAt;
-        }
+        _lat = merged.lat;
+        _lng = merged.lng;
+        _accuracyM = merged.accuracyM;
+        _updatedAt = merged.updatedAt;
       }
     } catch (_) {}
   }
@@ -146,8 +139,9 @@ class _LocationPageElderlyState extends State<LocationPageElderly> {
           _lat = pos.latitude;
           _lng = pos.longitude;
           _accuracyM = pos.accuracy;
-          _updatedAt = DateTime.now();
         }
+        // Authoritative observation time from server (UTC), not DateTime.now().
+        await _loadLastKnownFromServer();
         _statusText = ok
             ? 'تم نشر الموقع — تحديث كل 60 ثانية أثناء فتح التطبيق'
             : (_sharing.lastError ?? 'تعذّر نشر الموقع');
@@ -183,8 +177,9 @@ class _LocationPageElderlyState extends State<LocationPageElderly> {
           _lat = pos.latitude;
           _lng = pos.longitude;
           _accuracyM = pos.accuracy;
-          _updatedAt = DateTime.now();
         }
+        // Authoritative observation time from server (UTC), not DateTime.now().
+        await _loadLastKnownFromServer();
         final note = _sharing.lastWarning;
         _statusText = (note != null && note.isNotEmpty)
             ? 'تم تحديث الموقع من GPS — $note'

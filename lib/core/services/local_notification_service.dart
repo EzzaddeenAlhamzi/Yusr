@@ -25,6 +25,13 @@ class LocalNotificationService {
   bool _initialized = false;
   NotificationNavHandler? onNavigate;
 
+  /// Test hook: when set, [cancelAll] invokes this instead of the OS plugin.
+  @visibleForTesting
+  Future<void> Function()? debugCancelAllHook;
+
+  /// Lock-screen / shade copy — no medication names or dosage (M-4).
+  static const lockScreenMedReminderCopy = 'لديك تذكير دواء';
+
   bool get isInitialized => _initialized;
 
   Future<void> initialize({NotificationNavHandler? onNavigate}) async {
@@ -120,6 +127,11 @@ class LocalNotificationService {
   }
 
   Future<void> cancelAll() async {
+    final hook = debugCancelAllHook;
+    if (hook != null) {
+      await hook();
+      return;
+    }
     if (!_initialized) return;
     await _plugin.cancelAll();
   }
@@ -167,10 +179,14 @@ class LocalNotificationService {
       'kind': 'med',
     });
 
+    // M-4: conservative lock-screen — generic title/body only (no med name /
+    // dosage / account). Details appear after opening the authorized app
+    // (payload → medicines page). [medicationName] kept for caller API.
+    final _ = medicationName;
     await _plugin.zonedSchedule(
       id,
-      'تذكير دواء',
-      'حان موعد تناول «$medicationName». أكّد التناول من الشاشة عند الجاهزية.',
+      lockScreenMedReminderCopy,
+      lockScreenMedReminderCopy,
       when,
       NotificationDetails(
         android: AndroidNotificationDetails(
@@ -179,9 +195,9 @@ class LocalNotificationService {
           channelDescription: 'تذكيرات جرعات الدواء في موعدها',
           importance: Importance.high,
           priority: Priority.high,
-          styleInformation: BigTextStyleInformation(
-            'حان موعد تناول «$medicationName». '
-            'التذكير لا يعني التأكيد تلقائياً.',
+          visibility: NotificationVisibility.private,
+          styleInformation: const BigTextStyleInformation(
+            lockScreenMedReminderCopy,
           ),
         ),
         iOS: const DarwinNotificationDetails(),

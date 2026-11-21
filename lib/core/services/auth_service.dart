@@ -183,6 +183,11 @@ class AuthService extends ChangeNotifier {
   }
 
   /// Call before applying a new login when a different in-memory user exists.
+  ///
+  /// M-3 / Lock I: when switching accounts, cancel the *previous* account's
+  /// scheduled local OS notifications before clearing session. Does not run
+  /// [LocalNotificationService.cancelAll] for same-user re-entry (no schedules
+  /// of a new account exist yet at this point).
   Future<void> prepareForUserSwitch({
     required String newRole,
     required int newUserId,
@@ -191,6 +196,9 @@ class AuthService extends ChangeNotifier {
     final switching = _isLoggedIn &&
         (_role != normalized || _userId != newUserId);
     if (switching) {
+      try {
+        await LocalNotificationService.instance.cancelAll();
+      } catch (_) {}
       await clearUserScopedCaches(includePerUserModeKeys: true);
       SeniorManager().clear();
       clearSessionLocal();

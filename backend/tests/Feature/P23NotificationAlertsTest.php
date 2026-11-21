@@ -246,6 +246,123 @@ class P23NotificationAlertsTest extends TestCase
             fwrite(STDERR, 'URGENT_FAIL '.$ok->status().' '.$ok->getContent().' cg='.json_encode($cg->toArray())."\n");
         }
         $ok->assertCreated()->assertJsonPath('status', 'success');
+        // Option A: urgent create must not accept client idempotency keys.
+        $this->assertNull($ok->json('data.event_type'));
+        $this->assertNull($ok->json('data.occurrence_key'));
+        $this->assertNull($ok->json('data.DoseOccurrence_ID'));
+    }
+
+    /** M-1: elderly cannot list or mark-read caregiver-only overdue alerts. */
+    public function test_elderly_cannot_list_or_mark_caregiver_only_overdue(): void
+    {
+        $elderly = $this->makeElderly('771033020');
+        $cg = $this->makeCaregiver('771033021', (int) $elderly->Eldery_ID);
+        $otherCg = $this->makeCaregiver('771033022', (int) $elderly->Eldery_ID);
+        $this->seedOverdueOccurrence((int) $elderly->Eldery_ID);
+
+        Carbon::setTestNow(Carbon::parse('2026-11-20 09:00:00'));
+        app(CaregiverOverdueAlertService::class)->dispatch(Carbon::now());
+        Carbon::setTestNow();
+
+        $cgRow = Notification::query()
+            ->where('Caregiver_ID', $cg->Caregivers_ID)
+            ->where('event_type', CaregiverOverdueAlertService::EVENT_TYPE)
+            ->first();
+        $this->assertNotNull($cgRow);
+
+        // Elderly list excludes CG-only overdue rows (REST).
+        $this->app['auth']->forgetGuards();
+        $this->flushHeaders();
+        $elList = $this->withToken($this->tokenFor($elderly))->getJson('/api/notifications');
+        $elList->assertOk()->assertJsonPath('status', 'success');
+        foreach ($elList->json('data') as $row) {
+            $this->assertNotSame(CaregiverOverdueAlertService::EVENT_TYPE, $row['event_type'] ?? null);
+        }
+        $this->assertSame(0, count($elList->json('data')));
+
+        // Elderly mark-read denied (REST).
+        $this->app['auth']->forgetGuards();
+        $this->flushHeaders();
+        $this->withToken($this->tokenFor($elderly))
+            ->postJson('/api/notifications/'.$cgRow->Notifications_ID.'/read')
+            ->assertStatus(403);
+
+        // Legacy mark_notification_read also denied.
+        $this->app['auth']->forgetGuards();
+        $this->flushHeaders();
+        $this->withToken($this->tokenFor($elderly))
+            ->postJson('/api/legacy', [
+                'action' => 'mark_notification_read',
+                'Notifications_ID' => $cgRow->Notifications_ID,
+            ])
+            ->assertStatus(403);
+
+        // Linked caregiver can list + mark-read own row.
+        $this->app['auth']->forgetGuards();
+        $this->flushHeaders();
+        $cgList = $this->withToken($this->tokenFor($cg))->getJson('/api/notifications');
+        $cgList->assertOk();
+        $this->assertGreaterThanOrEqual(1, count($cgList->json('data')));
+        $this->app['auth']->forgetGuards();
+        $this->flushHeaders();
+        $this->withToken($this->tokenFor($cg))
+            ->postJson('/api/notifications/'.$cgRow->Notifications_ID.'/read')
+            ->assertOk()
+            ->assertJsonPath('data.N_Status', Notification::STATUS_READ);
+
+        // Other linked caregiver cannot mark the first CG's row.
+        $otherRow = Notification::query()
+            ->where('Caregiver_ID', $otherCg->Caregivers_ID)
+            ->first();
+        $this->assertNotNull($otherRow);
+        $this->app['auth']->forgetGuards();
+        $this->flushHeaders();
+        $this->withToken($this->tokenFor($otherCg))
+            ->postJson('/api/notifications/'.$cgRow->Notifications_ID.'/read')
+            ->assertStatus(403);
+    }
+
+    /** M-2: client cannot poison unique keys to suppress overdue dispatch. */
+    public function test_client_cannot_poison_overdue_event_keys(): void
+    {
+        $elderly = $this->makeElderly('771033023');
+        $cg = $this->makeCaregiver('771033024', (int) $elderly->Eldery_ID);
+        $occ = $this->seedOverdueOccurrence((int) $elderly->Eldery_ID);
+
+        // Authenticated linked actor attempts to pre-create the unique key.
+        $poison = $this->withToken($this->tokenFor($cg))->postJson('/api/notifications', [
+            'N_Title' => 'poison',
+            'N_Message' => 'poison body',
+            'N_Type' => 'med_overdue',
+            'event_type' => CaregiverOverdueAlertService::EVENT_TYPE,
+            'occurrence_key' => $occ->occurrence_key,
+            'DoseOccurrence_ID' => $occ->DoseOccurrence_ID,
+            'Eldery_ID' => $elderly->Eldery_ID,
+        ]);
+        $poison->assertCreated()->assertJsonPath('status', 'success');
+        $this->assertNull($poison->json('data.event_type'));
+        $this->assertNull($poison->json('data.occurrence_key'));
+        $this->assertNull($poison->json('data.DoseOccurrence_ID'));
+
+        // Overdue dispatch must still create the real caregiver alert.
+        Carbon::setTestNow(Carbon::parse('2026-11-20 09:00:00'));
+        $result = app(CaregiverOverdueAlertService::class)->dispatch(Carbon::now());
+        Carbon::setTestNow();
+
+        $this->assertSame(1, $result['created']);
+        $this->assertDatabaseHas('notifications', [
+            'Caregiver_ID' => $cg->Caregivers_ID,
+            'event_type' => CaregiverOverdueAlertService::EVENT_TYPE,
+            'occurrence_key' => $occ->occurrence_key,
+        ]);
+        $this->assertSame(
+            1,
+            Notification::query()
+                ->where('Caregiver_ID', $cg->Caregivers_ID)
+                ->where('event_type', CaregiverOverdueAlertService::EVENT_TYPE)
+                ->where('occurrence_key', $occ->occurrence_key)
+                ->count()
+        );
     }
 
     public function test_p22_baselines_still_pass_grace_display(): void

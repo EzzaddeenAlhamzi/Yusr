@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Caregiver;
 use App\Models\Elderly;
 use App\Models\Notification;
+use App\Services\CaregiverOverdueAlertService;
 use App\Support\YusrAccess;
 use Illuminate\Http\Request;
 
@@ -43,7 +44,13 @@ class NotificationController extends Controller
             if ($requestedEl !== null && $requestedEl !== $elderlyId) {
                 return YusrAccess::forbidden('غير مصرح بعرض إشعارات كبير سن آخر');
             }
-            $query->where('Eldery_ID', $elderlyId);
+            // M-1: elderly must not list caregiver-only Channel B overdue alerts
+            // (those rows also set Eldery_ID for linkage context).
+            $query->where('Eldery_ID', $elderlyId)
+                ->where(function ($q) {
+                    $q->whereNull('event_type')
+                        ->orWhere('event_type', '!=', CaregiverOverdueAlertService::EVENT_TYPE);
+                });
         }
 
         $unreadOnly = $request->query('unread_only', $request->input('unread_only'));
@@ -120,13 +127,16 @@ class NotificationController extends Controller
             }
         }
 
+        // M-2: event_type / occurrence_key / DoseOccurrence_ID are server/job-only
+        // (CaregiverOverdueAlertService). Clients must not poison unique keys.
+        // Urgent Option A in-app reminders still work via title/message/type only.
         $notification = Notification::create([
             'N_Title' => $title,
             'N_Message' => $message,
             'N_Type' => $type,
-            'event_type' => $request->input('event_type'),
-            'occurrence_key' => $request->input('occurrence_key'),
-            'DoseOccurrence_ID' => $request->input('DoseOccurrence_ID'),
+            'event_type' => null,
+            'occurrence_key' => null,
+            'DoseOccurrence_ID' => null,
             'N_Date' => now()->format('Y-m-d'),
             'N_Time' => now()->format('H:i:s'),
             'N_Status' => Notification::STATUS_UNREAD,
@@ -167,6 +177,11 @@ class NotificationController extends Controller
                 return YusrAccess::forbidden('غير مصرح بتحديث إشعار مقدم رعاية آخر');
             }
         } else {
+            // M-1: caregiver-only overdue alerts are not markable by elderly
+            // even when Eldery_ID matches for fan-out context.
+            if ((string) $notification->event_type === CaregiverOverdueAlertService::EVENT_TYPE) {
+                return YusrAccess::forbidden('غير مصرح بتحديث تنبيه مخصص لمقدم الرعاية');
+            }
             if ((int) $notification->Eldery_ID !== (int) $actor->Eldery_ID) {
                 return YusrAccess::forbidden('غير مصرح بتحديث إشعار كبير سن آخر');
             }

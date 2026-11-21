@@ -29,10 +29,26 @@ class LocalNotificationService {
   @visibleForTesting
   Future<void> Function()? debugCancelAllHook;
 
+  /// Test hook: when true, appointment schedule/cancel use in-memory tracking
+  /// instead of the OS plugin (Lock K regression tests).
+  @visibleForTesting
+  bool debugAppointmentTracking = false;
+
+  /// Pending appointment reminders under [debugAppointmentTracking].
+  /// Key = notification id; value = meta for assertions.
+  @visibleForTesting
+  final Map<int, Map<String, dynamic>> debugPendingAppointments = {};
+
   /// Lock-screen / shade copy — no medication names or dosage (M-4).
   static const lockScreenMedReminderCopy = 'لديك تذكير دواء';
 
   bool get isInitialized => _initialized;
+
+  @visibleForTesting
+  void debugResetAppointmentTracking() {
+    debugAppointmentTracking = false;
+    debugPendingAppointments.clear();
+  }
 
   Future<void> initialize({NotificationNavHandler? onNavigate}) async {
     this.onNavigate = onNavigate;
@@ -137,6 +153,10 @@ class LocalNotificationService {
   }
 
   Future<void> cancelId(int id) async {
+    if (debugAppointmentTracking) {
+      debugPendingAppointments.remove(id);
+      return;
+    }
     if (!_initialized) return;
     await _plugin.cancel(id);
   }
@@ -146,6 +166,20 @@ class LocalNotificationService {
     required String occurrenceKey,
   }) async {
     await cancelId(LocalNotificationIds.medReminder(elderlyId, occurrenceKey));
+  }
+
+  /// Cancel stable + legacy offset-based IDs for one appointment.
+  /// Safe for unrelated meds/other appointments (ID set is scoped).
+  Future<void> cancelAppointmentReminder({
+    required int elderlyId,
+    required int appointmentId,
+  }) async {
+    for (final id in LocalNotificationIds.appointmentReminderIdsToCancel(
+      elderlyId,
+      appointmentId,
+    )) {
+      await cancelId(id);
+    }
   }
 
   /// Schedule med reminder at scheduled_at. Never auto-Taken. Quiet hours do not suppress.
@@ -216,27 +250,42 @@ class LocalNotificationService {
     required int offsetMinutes,
     required QuietHoursPolicy quiet,
   }) async {
-    if (!_initialized) await initialize();
+    // Always clear prior stable + legacy IDs first so offset changes never
+    // leave duplicate pending reminders for the same appointment.
+    await cancelAppointmentReminder(
+      elderlyId: elderlyId,
+      appointmentId: appointmentId,
+    );
+
     if (offsetMinutes <= 0) {
-      await cancelId(
-        LocalNotificationIds.appointmentReminder(elderlyId, appointmentId, offsetMinutes),
-      );
       return false;
     }
+
     final fireAt = appointmentAtLocal.subtract(Duration(minutes: offsetMinutes));
     if (fireAt.isBefore(DateTime.now())) return false;
     if (quiet.shouldSuppressAppointment(fireAt)) {
       // Honest skip — do not silently claim scheduled.
       return false;
     }
+
+    final id = LocalNotificationIds.appointmentReminder(elderlyId, appointmentId);
+
+    if (debugAppointmentTracking) {
+      debugPendingAppointments[id] = {
+        'elderly_id': elderlyId,
+        'appointment_id': appointmentId,
+        'offset_minutes': offsetMinutes,
+        'appointment_at': appointmentAtLocal.toIso8601String(),
+        'fire_at': fireAt.toIso8601String(),
+        'title': title,
+      };
+      return true;
+    }
+
+    if (!_initialized) await initialize();
     final granted = await isPermissionGranted();
     if (!granted) return false;
 
-    final id = LocalNotificationIds.appointmentReminder(
-      elderlyId,
-      appointmentId,
-      offsetMinutes,
-    );
     final when = tz.TZDateTime.from(fireAt, tz.local);
     final payload = jsonEncode({
       'route': '/appointments',

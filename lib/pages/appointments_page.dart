@@ -155,7 +155,8 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
     }
   }
 
-  /// P2.3 Lock K — local appointment reminders (default offset 60m PROPOSED).
+  /// P2.3 Lock K — local appointment reminders (default offset 60m).
+  /// Cancelled / past / disabled → cancel stable + legacy IDs; else reschedule.
   Future<void> _syncLocalAppointmentReminders(
     int seniorId,
     List<Map<String, dynamic>> items,
@@ -164,7 +165,6 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
       final uid = AuthService().userId ?? seniorId;
       final quiet = await LocalNotificationService.instance.loadQuietHours(uid);
       for (final item in items) {
-        if (item['isCancelled'] == true || item['isPast'] == true) continue;
         final id = item['id'] is int
             ? item['id'] as int
             : int.tryParse(item['id']?.toString() ?? '');
@@ -173,6 +173,16 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
         final offset = AppointmentReminderOffset.minutesFromLabel(
           item['advanceReminder']?.toString(),
         );
+        final shouldCancel = item['isCancelled'] == true ||
+            item['isPast'] == true ||
+            offset <= 0;
+        if (shouldCancel) {
+          await LocalNotificationService.instance.cancelAppointmentReminder(
+            elderlyId: seniorId,
+            appointmentId: id,
+          );
+          continue;
+        }
         await LocalNotificationService.instance.scheduleAppointmentReminder(
           elderlyId: seniorId,
           appointmentId: id,
@@ -1712,10 +1722,11 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                   );
                   return;
                 }
+                final parsedId = appointmentId is int
+                    ? appointmentId
+                    : int.parse(appointmentId.toString());
                 final res = await ApiService.instance.deleteAppointment(
-                  appointmentId is int
-                      ? appointmentId
-                      : int.parse(appointmentId.toString()),
+                  parsedId,
                 );
                 if (!context.mounted) return;
                 if (res['status'] != 'success') {
@@ -1729,6 +1740,16 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                     ),
                   );
                   return;
+                }
+                // Cancel stable + legacy local reminders for this appointment.
+                final senior = SeniorManager().currentSenior;
+                final int? seniorId = int.tryParse(senior.id);
+                if (seniorId != null) {
+                  await LocalNotificationService.instance
+                      .cancelAppointmentReminder(
+                    elderlyId: seniorId,
+                    appointmentId: parsedId,
+                  );
                 }
                 await _loadAppointments();
               },

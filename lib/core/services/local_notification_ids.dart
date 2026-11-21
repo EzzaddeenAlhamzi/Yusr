@@ -3,12 +3,40 @@
 class LocalNotificationIds {
   LocalNotificationIds._();
 
+  /// Supported Lock K UI offsets (minutes). Used for legacy ID cleanup only.
+  static const List<int> supportedAppointmentOffsets = [0, 15, 30, 60, 1440];
+
   static int medReminder(int elderlyId, String occurrenceKey) {
     return _hash32('med|$elderlyId|$occurrenceKey');
   }
 
-  static int appointmentReminder(int elderlyId, int appointmentId, int offsetMinutes) {
+  /// Stable appointment reminder ID — independent of offset (Lock K hygiene).
+  /// One pending reminder slot per elderly+appointment.
+  static int appointmentReminder(int elderlyId, int appointmentId) {
+    return _hash32('appt|$elderlyId|$appointmentId');
+  }
+
+  /// Pre-fix V1 IDs that encoded [offsetMinutes] in the hash key.
+  /// Kept only so cancel/reschedule can clear leftovers from older builds.
+  static int appointmentReminderLegacy(
+    int elderlyId,
+    int appointmentId,
+    int offsetMinutes,
+  ) {
     return _hash32('appt|$elderlyId|$appointmentId|$offsetMinutes');
+  }
+
+  /// Stable ID + all known legacy offset IDs for one appointment.
+  /// Does not include medication IDs or other appointments.
+  static Set<int> appointmentReminderIdsToCancel(
+    int elderlyId,
+    int appointmentId,
+  ) {
+    final ids = <int>{appointmentReminder(elderlyId, appointmentId)};
+    for (final offset in supportedAppointmentOffsets) {
+      ids.add(appointmentReminderLegacy(elderlyId, appointmentId, offset));
+    }
+    return ids;
   }
 
   /// FNV-1a 32-bit → positive 31-bit int (Android notification id range).
@@ -75,7 +103,7 @@ class QuietHoursPolicy {
 class AppointmentReminderOffset {
   AppointmentReminderOffset._();
 
-  /// V1 documented default: 60 minutes (PROPOSED permanent PO lock).
+  /// V1 documented default: 60 minutes (Lock K — PO APPROVED — FINAL).
   static const int defaultMinutes = 60;
   static const String defaultLabel = 'قبل الموعد بساعة';
 

@@ -159,7 +159,7 @@ class _ReturnHomePageState extends State<ReturnHomePage> {
         child: Column(
           children: [
             CustomTopBar(
-              title: 'الموقع والعودة للمنزل',
+              title: 'العودة للمنزل',
               onBack: () => Navigator.maybePop(context),
             ),
             const SizedBox(height: 10),
@@ -253,7 +253,10 @@ class _ReturnHomePageState extends State<ReturnHomePage> {
                               width: double.infinity,
                               height: 62,
                               child: OutlinedButton(
-                                onPressed: _shareLocation,
+                                onPressed: () {
+                                  // P2.4 primary sharing/consent surface.
+                                  Navigator.pushNamed(context, '/location-elderly');
+                                },
                                 style: OutlinedButton.styleFrom(
                                   backgroundColor: Colors.white,
                                   side: const BorderSide(color: appbarColor, width: 2),
@@ -263,12 +266,24 @@ class _ReturnHomePageState extends State<ReturnHomePage> {
                                   ),
                                 ),
                                 child: Text(
-                                  'مشاركة الموقع',
+                                  'مشاركة موقعي',
                                   style: GoogleFonts.tajawal(
                                     color: appbarColor,
                                     fontSize: 24,
                                     fontWeight: FontWeight.bold,
                                   ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            TextButton(
+                              onPressed: _shareLocation,
+                              child: Text(
+                                'فتح الإحداثيات في الخرائط',
+                                style: GoogleFonts.tajawal(
+                                  color: appbarColor,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
                             ),

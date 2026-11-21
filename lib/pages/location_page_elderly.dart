@@ -353,6 +353,35 @@ class _LocationPageElderlyState extends State<LocationPageElderly> {
                                 ),
                               ),
                             ),
+                            const SizedBox(height: 10),
+                            // Separate return-home flow (not the primary location surface).
+                            SizedBox(
+                              width: double.infinity,
+                              height: 48,
+                              child: OutlinedButton.icon(
+                                onPressed: () {
+                                  Navigator.pushNamed(context, '/return-home');
+                                },
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: appbarColor,
+                                  side: const BorderSide(
+                                    color: appbarColor,
+                                    width: 1.4,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                ),
+                                icon: const Icon(Icons.home_rounded),
+                                label: Text(
+                                  'العودة للمنزل (توجيه)',
+                                  style: GoogleFonts.tajawal(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
                             const SizedBox(height: 20),
                           ],
                         ),

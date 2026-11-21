@@ -185,7 +185,10 @@ class _LocationPageElderlyState extends State<LocationPageElderly> {
           _accuracyM = pos.accuracy;
           _updatedAt = DateTime.now();
         }
-        _statusText = 'تم تحديث الموقع من GPS';
+        final note = _sharing.lastWarning;
+        _statusText = (note != null && note.isNotEmpty)
+            ? 'تم تحديث الموقع من GPS — $note'
+            : 'تم تحديث الموقع من GPS';
       } else {
         // Keep last-known coords if any; do NOT bump _updatedAt (no new GPS).
         final err = _sharing.lastError ??

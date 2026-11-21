@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yusr1/core/geo/geofence_math.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:permission_handler/permission_handler.dart' as ph;
+import 'package:yusr1/core/location/location_access_gate.dart';
 import 'package:yusr1/core/location/location_alert_category.dart';
 import 'package:yusr1/core/location/location_freshness.dart';
 import 'package:yusr1/core/map/osm_tile_provider.dart';
@@ -173,6 +176,138 @@ void main() {
         LocationSharingService.errPermissionPermanentlyDenied,
         contains('نهائي'),
       );
+      expect(LocationSharingService.errApproximateOnly, contains('التقريبي'));
+    });
+  });
+
+  group('P2.4 permission deny gate (no false GPS success)', () {
+    tearDown(() async {
+      await LocationSharingService.instance.clearLocalState();
+    });
+
+    test('denied after fix → Arabic error, no success / no freshness bump',
+        () async {
+      final svc = LocationSharingService.instance;
+      await svc.clearLocalState();
+      svc.debugSetServerSharingEnabled(true);
+
+      // Platform returns a fused fix, but permission is denied (pm revoke case).
+      var getCurrentCalls = 0;
+      svc.accessGate = LocationAccessGate(
+        servicesEnabled: () async => true,
+        checkGeoPermission: () async => LocationPermission.denied,
+        requestGeoPermission: () async => LocationPermission.denied,
+        whenInUseStatus: () async => ph.PermissionStatus.denied,
+        fineStatus: () async => ph.PermissionStatus.denied,
+        requestWhenInUse: () async => ph.PermissionStatus.denied,
+        locationAccuracy: () async => LocationAccuracyStatus.reduced,
+      );
+      // Gate must refuse before success — getCurrent must not unlock publish.
+      svc.debugGetCurrentPosition = () async {
+        getCurrentCalls++;
+        return Position(
+          longitude: 44.1910,
+          latitude: 15.3694,
+          timestamp: DateTime.now(),
+          accuracy: 12,
+          altitude: 0,
+          altitudeAccuracy: 0,
+          heading: 0,
+          headingAccuracy: 0,
+          speed: 0,
+          speedAccuracy: 0,
+        );
+      };
+
+      final beforePublish = svc.lastSuccessfulPublishAt;
+      final pos = await svc.acquireCurrentPosition();
+      expect(pos, isNull);
+      expect(svc.lastError, LocationSharingService.errPermissionDenied);
+      expect(svc.lastSuccessfulPublishAt, beforePublish);
+
+      // publishOnce must also fail without claiming GPS success.
+      final published = await svc.publishOnce(manual: true);
+      expect(published, isFalse);
+      expect(svc.lastError, LocationSharingService.errPermissionDenied);
+      expect(svc.lastSuccessfulPublishAt, isNull);
+      // Denied before read → getCurrent never consulted for success.
+      expect(getCurrentCalls, 0);
+    });
+
+    test('post-fix revoke: position discarded when re-check denies', () async {
+      final svc = LocationSharingService.instance;
+      await svc.clearLocalState();
+      svc.debugSetServerSharingEnabled(true);
+
+      var geoPerm = LocationPermission.whileInUse;
+      var whenInUse = ph.PermissionStatus.granted;
+      var fine = ph.PermissionStatus.granted;
+
+      svc.accessGate = LocationAccessGate(
+        servicesEnabled: () async => true,
+        checkGeoPermission: () async => geoPerm,
+        requestGeoPermission: () async => geoPerm,
+        whenInUseStatus: () async => whenInUse,
+        fineStatus: () async => fine,
+        requestWhenInUse: () async => whenInUse,
+        locationAccuracy: () async => LocationAccuracyStatus.precise,
+      );
+      svc.debugGetCurrentPosition = () async {
+        // Simulate mid-flight revoke after fused provider returns a fix.
+        geoPerm = LocationPermission.denied;
+        whenInUse = ph.PermissionStatus.denied;
+        fine = ph.PermissionStatus.denied;
+        return Position(
+          longitude: 44.1910,
+          latitude: 15.3694,
+          timestamp: DateTime.now(),
+          accuracy: 12,
+          altitude: 0,
+          altitudeAccuracy: 0,
+          heading: 0,
+          headingAccuracy: 0,
+          speed: 0,
+          speedAccuracy: 0,
+        );
+      };
+
+      final pos = await svc.acquireCurrentPosition();
+      expect(pos, isNull);
+      expect(svc.lastError, LocationSharingService.errPermissionDenied);
+      expect(svc.lastKnownPosition, isNull);
+    });
+
+    test('approximate-only is allowed with Arabic warning (not deny)', () async {
+      final svc = LocationSharingService.instance;
+      await svc.clearLocalState();
+      svc.debugSetServerSharingEnabled(true);
+
+      svc.accessGate = LocationAccessGate(
+        servicesEnabled: () async => true,
+        checkGeoPermission: () async => LocationPermission.whileInUse,
+        requestGeoPermission: () async => LocationPermission.whileInUse,
+        whenInUseStatus: () async => ph.PermissionStatus.granted,
+        fineStatus: () async => ph.PermissionStatus.denied,
+        requestWhenInUse: () async => ph.PermissionStatus.granted,
+        locationAccuracy: () async => LocationAccuracyStatus.reduced,
+      );
+      svc.debugGetCurrentPosition = () async => Position(
+            longitude: 44.1910,
+            latitude: 15.3694,
+            timestamp: DateTime.now(),
+            accuracy: 500,
+            altitude: 0,
+            altitudeAccuracy: 0,
+            heading: 0,
+            headingAccuracy: 0,
+            speed: 0,
+            speedAccuracy: 0,
+          );
+
+      final pos = await svc.acquireCurrentPosition();
+      expect(pos, isNotNull);
+      expect(svc.lastError, isNull);
+      expect(svc.lastWarning, LocationSharingService.errApproximateOnly);
     });
   });
 

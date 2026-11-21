@@ -4,6 +4,7 @@ import 'package:flutter/widgets.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../location/location_access_gate.dart';
 import 'api_service.dart';
 import 'auth_service.dart';
 
@@ -11,6 +12,10 @@ import 'auth_service.dart';
 ///
 /// Updates at most every 60s while the app is resumed and sharing is enabled.
 /// Never fabricates GPS. No background tracking.
+///
+/// A position fix is accepted only after [LocationAccessGate] confirms
+/// services + permission (Geolocator **and** permission_handler). Mid-session
+/// revoke must not claim «تم تحديث الموقع من GPS».
 class LocationSharingService with WidgetsBindingObserver {
   LocationSharingService._();
   static final LocationSharingService instance = LocationSharingService._();
@@ -23,14 +28,31 @@ class LocationSharingService with WidgetsBindingObserver {
   bool _observing = false;
   bool _serverSharingEnabled = false;
   String? _lastError;
+  String? _lastWarning;
   DateTime? _lastSuccessfulPublishAt;
   Position? _lastKnownPosition;
 
+  /// Injectable for tests — production uses real platform APIs.
+  LocationAccessGate accessGate = LocationAccessGate();
+
+  /// Optional override for getCurrentPosition (tests).
+  Future<Position> Function()? debugGetCurrentPosition;
+
   bool get serverSharingEnabled => _serverSharingEnabled;
   String? get lastError => _lastError;
+  String? get lastWarning => _lastWarning;
   DateTime? get lastSuccessfulPublishAt => _lastSuccessfulPublishAt;
   Position? get lastKnownPosition => _lastKnownPosition;
   bool get isForegroundLoopRunning => _timer != null;
+
+  // Aliases kept for existing call sites / tests.
+  static const String errServicesOff = LocationAccessMessages.servicesOff;
+  static const String errPermissionDenied = LocationAccessMessages.denied;
+  static const String errPermissionPermanentlyDenied =
+      LocationAccessMessages.permanentlyDenied;
+  static const String errGpsUnavailable = LocationAccessMessages.gpsUnavailable;
+  static const String errApproximateOnly =
+      LocationAccessMessages.approximateOnly;
 
   Future<void> ensureLifecycleObserver() async {
     if (_observing) return;
@@ -105,68 +127,69 @@ class LocationSharingService with WidgetsBindingObserver {
     _timer = null;
   }
 
-  /// GPS / permission outcome for honest Arabic UI (never claim success).
-  static const String errServicesOff =
-      'خدمات الموقع مطفأة على الجهاز — فعّلها ثم أعد المحاولة';
-  static const String errPermissionDenied =
-      'تم رفض إذن الموقع — اسمح بالوصول أثناء استخدام التطبيق';
-  static const String errPermissionPermanentlyDenied =
-      'إذن الموقع مرفوض نهائيًا — افتح إعدادات التطبيق وفعّل الموقع';
-  static const String errGpsUnavailable =
-      'تعذر الحصول على موقع GPS حالياً — سيُعرض آخر موقع معروف إن وُجد';
-
   /// Request while-in-use permission only (no background).
   Future<LocationPermission> ensureForegroundPermission() async {
-    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      _lastError = errServicesOff;
-      return LocationPermission.denied;
-    }
-
-    var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-    if (permission == LocationPermission.denied) {
-      _lastError = errPermissionDenied;
-    } else if (permission == LocationPermission.deniedForever) {
-      _lastError = errPermissionPermanentlyDenied;
-    }
-    return permission;
+    final snap = await accessGate.ensure(requestIfDenied: true);
+    _applyAccessSnapshot(snap, allowApproximateWarning: true);
+    return snap.geolocatorPermission ?? LocationPermission.denied;
   }
 
-  Future<Position?> acquireCurrentPosition() async {
-    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      _lastError = errServicesOff;
-      return null;
+  void _applyAccessSnapshot(
+    LocationAccessSnapshot snap, {
+    required bool allowApproximateWarning,
+  }) {
+    _lastWarning = null;
+    if (snap.kind == LocationAccessKind.servicesOff ||
+        snap.kind == LocationAccessKind.denied ||
+        snap.kind == LocationAccessKind.permanentlyDenied) {
+      _lastError = snap.arabicMessage;
+      return;
     }
-
-    final permission = await ensureForegroundPermission();
-    if (permission == LocationPermission.deniedForever) {
-      _lastError = errPermissionPermanentlyDenied;
-      return null;
+    if (snap.kind == LocationAccessKind.okApproximate &&
+        allowApproximateWarning) {
+      _lastWarning = snap.arabicMessage;
     }
-    if (permission != LocationPermission.whileInUse &&
-        permission != LocationPermission.always) {
-      _lastError = errPermissionDenied;
-      return null;
-    }
-
-    try {
-      final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          timeLimit: Duration(seconds: 15),
-        ),
-      );
-      _lastKnownPosition = pos;
+    if (snap.allowsFix) {
       _lastError = null;
-      return pos;
+    }
+  }
+
+  /// Acquire a fix only when access gate allows it — before **and** after read.
+  Future<Position?> acquireCurrentPosition() async {
+    final before = await accessGate.ensure(requestIfDenied: true);
+    _applyAccessSnapshot(before, allowApproximateWarning: true);
+    if (!before.allowsFix) {
+      return null;
+    }
+
+    Position pos;
+    try {
+      if (debugGetCurrentPosition != null) {
+        pos = await debugGetCurrentPosition!();
+      } else {
+        pos = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+            timeLimit: Duration(seconds: 15),
+          ),
+        );
+      }
     } catch (e) {
       _lastError = errGpsUnavailable;
       return null;
     }
+
+    // Critical: re-check after the platform returns a fix (handles pm revoke /
+    // cached fused locations while dumpsys granted=false).
+    final after = await accessGate.evaluate();
+    _applyAccessSnapshot(after, allowApproximateWarning: true);
+    if (!after.allowsFix) {
+      // Do NOT bump _lastKnownPosition or claim a new update.
+      return null;
+    }
+
+    _lastKnownPosition = pos;
+    return pos;
   }
 
   Future<bool> publishOnce({bool manual = true}) async {
@@ -183,6 +206,13 @@ class LocationSharingService with WidgetsBindingObserver {
 
       final pos = await acquireCurrentPosition();
       if (pos == null) return false;
+
+      // Final gate immediately before treating publish as GPS success.
+      final finalGate = await accessGate.evaluate();
+      _applyAccessSnapshot(finalGate, allowApproximateWarning: true);
+      if (!finalGate.allowsFix) {
+        return false;
+      }
 
       final elderlyId = AuthService().userId;
       if (elderlyId == null) {
@@ -222,9 +252,17 @@ class LocationSharingService with WidgetsBindingObserver {
     _lastKnownPosition = null;
     _lastSuccessfulPublishAt = null;
     _lastError = null;
+    _lastWarning = null;
+    accessGate = LocationAccessGate();
+    debugGetCurrentPosition = null;
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_prefKeyForUser());
     } catch (_) {}
+  }
+
+  @visibleForTesting
+  void debugSetServerSharingEnabled(bool enabled) {
+    _serverSharingEnabled = enabled;
   }
 }

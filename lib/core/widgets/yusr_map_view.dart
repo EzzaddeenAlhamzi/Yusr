@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -6,8 +8,9 @@ import 'package:latlong2/latlong.dart';
 import '../constants/app_colors.dart';
 import '../map/osm_tile_provider.dart';
 
-/// P2.4 — real interactive geographic map (OSM tiles via flutter_map).
+/// P2.4 — real interactive geographic map (OSM-derived tiles via flutter_map).
 /// Never uses decorative fake painters as the map surface.
+/// Tile success is independent of GPS success.
 class YusrMapView extends StatefulWidget {
   const YusrMapView({
     super.key,
@@ -19,6 +22,7 @@ class YusrMapView extends StatefulWidget {
     this.onTap,
     this.centerOnUser = true,
     this.showAttribution = true,
+    this.debugForceTilesFailed = false,
   });
 
   final double? latitude;
@@ -29,6 +33,9 @@ class YusrMapView extends StatefulWidget {
   final void Function(LatLng point)? onTap;
   final bool centerOnUser;
   final bool showAttribution;
+
+  /// Test-only: show Arabic tile error + retry without waiting for network.
+  final bool debugForceTilesFailed;
 
   @override
   State<YusrMapView> createState() => _YusrMapViewState();
@@ -53,6 +60,15 @@ class YusrMapZone {
 class _YusrMapViewState extends State<YusrMapView> {
   final MapController _controller = MapController();
   bool _tilesFailed = false;
+  int _tileRetryGeneration = 0;
+  late final NetworkTileProvider _tileProvider =
+      OsmTileProvider.createNetworkTileProvider();
+
+  @override
+  void initState() {
+    super.initState();
+    _tilesFailed = widget.debugForceTilesFailed;
+  }
 
   bool get _hasFix => widget.latitude != null && widget.longitude != null;
 
@@ -83,6 +99,19 @@ class _YusrMapViewState extends State<YusrMapView> {
   }
 
   @override
+  void dispose() {
+    unawaited(_tileProvider.dispose());
+    super.dispose();
+  }
+
+  void _retryTiles() {
+    setState(() {
+      _tilesFailed = false;
+      _tileRetryGeneration++;
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
@@ -97,6 +126,7 @@ class _YusrMapViewState extends State<YusrMapView> {
         child: Stack(
           children: [
             FlutterMap(
+              key: ValueKey('yusr-map-tiles-$_tileRetryGeneration'),
               mapController: _controller,
               options: MapOptions(
                 initialCenter: _center,
@@ -107,14 +137,14 @@ class _YusrMapViewState extends State<YusrMapView> {
                 onTap: widget.onTap == null
                     ? null
                     : (tap, point) => widget.onTap!(point),
-                onMapReady: () {
-                  // Attribution / tile URL configured via OsmTileProvider.
-                },
               ),
               children: [
                 TileLayer(
                   urlTemplate: OsmTileProvider.urlTemplate,
+                  fallbackUrl: OsmTileProvider.fallbackUrl,
+                  subdomains: OsmTileProvider.subdomains,
                   userAgentPackageName: OsmTileProvider.userAgentPackageName,
+                  tileProvider: _tileProvider,
                   maxZoom: 19,
                   errorTileCallback: (tile, error, stackTrace) {
                     if (mounted && !_tilesFailed) {
@@ -188,30 +218,41 @@ class _YusrMapViewState extends State<YusrMapView> {
                 ),
               ),
             if (_tilesFailed)
-              Positioned(
-                left: 8,
-                right: 8,
-                top: 8,
-                child: Material(
-                  color: Colors.orange.shade800,
-                  borderRadius: BorderRadius.circular(8),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 6,
-                    ),
-                    child: Text(
-                      'تعذّر تحميل بلاطات الخريطة — تحقق من الاتصال',
-                      textAlign: TextAlign.center,
-                      style: GoogleFonts.cairo(
-                        color: Colors.white,
-                        fontSize: 12,
+              Positioned.fill(
+                child: Container(
+                  color: Colors.black.withValues(alpha: 0.55),
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        OsmTileProvider.tileLoadErrorArabic,
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.cairo(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
-                    ),
+                      const SizedBox(height: 12),
+                      ElevatedButton.icon(
+                        onPressed: _retryTiles,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: AppColors.mainColor,
+                        ),
+                        icon: const Icon(Icons.refresh),
+                        label: Text(
+                          'إعادة المحاولة',
+                          style: GoogleFonts.cairo(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-            if (widget.showAttribution)
+            if (widget.showAttribution && !_tilesFailed)
               Positioned(
                 left: 6,
                 bottom: 4,

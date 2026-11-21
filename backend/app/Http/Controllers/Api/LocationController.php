@@ -402,12 +402,54 @@ class LocationController extends Controller
         ]);
 
         // Caregiver material edits become a pending proposal (cannot self-activate).
+        // Approved active geometry stays until elderly approves the replacement.
         if ($actor instanceof Caregiver) {
             if ($material) {
                 $parsed = $this->parseZoneInput($request, allowPartial: true, existing: $zone);
                 if ($parsed instanceof \Illuminate\Http\JsonResponse) {
                     return $parsed;
                 }
+
+                $isApprovedActive = $zone->approval_status === 'approved'
+                    && in_array((string) $zone->Z_state, ['active', 'Active', 'نشط'], true);
+
+                if ($isApprovedActive) {
+                    // Keep original row active; upsert a separate pending proposal.
+                    $proposal = SafeZone::query()
+                        ->where('Zldery_ID', (int) $zone->Zldery_ID)
+                        ->where('replaces_zone_id', (int) $zone->Zone_ID)
+                        ->where('approval_status', 'pending')
+                        ->first();
+
+                    if (! $proposal) {
+                        $proposal = new SafeZone();
+                        $proposal->Zldery_ID = (int) $zone->Zldery_ID;
+                        $proposal->replaces_zone_id = (int) $zone->Zone_ID;
+                        $proposal->created_at = now();
+                        $proposal->created_by_role = 'caregiver';
+                        $proposal->created_by_caregiver_id = (int) $actor->Caregivers_ID;
+                        $proposal->approval_status = 'pending';
+                        $proposal->Z_state = 'pending';
+                        $proposal->activated_at = null;
+                    }
+
+                    $proposal->Z_Name = $parsed['name'];
+                    $proposal->center_lat = $parsed['lat'];
+                    $proposal->center_lng = $parsed['lng'];
+                    $proposal->radius_meters = $parsed['radius'];
+                    $proposal->Z_Limit = $parsed['radius'];
+                    $proposal->updated_at = now();
+                    $proposal->save();
+
+                    return response()->json([
+                        'status' => 'success',
+                        'message' => 'تم اقتراح تعديل المنطقة — المنطقة الحالية تبقى نشطة حتى موافقة كبير السن',
+                        'data' => $this->serializeZone($proposal->fresh()),
+                        'active_zone' => $this->serializeZone($zone->fresh()),
+                    ]);
+                }
+
+                // Pending / non-active rows may be updated in place as proposals.
                 $zone->Z_Name = $parsed['name'];
                 $zone->center_lat = $parsed['lat'];
                 $zone->center_lng = $parsed['lng'];
@@ -545,11 +587,44 @@ class LocationController extends Controller
         }
 
         if ($approve) {
+            $replacesId = $zone->replaces_zone_id !== null ? (int) $zone->replaces_zone_id : 0;
+            if ($replacesId > 0) {
+                $target = SafeZone::query()->where('Zone_ID', $replacesId)->first();
+                if (! $target || (int) $target->Zldery_ID !== (int) $actor->Eldery_ID) {
+                    return YusrAccess::notFound('المنطقة الأصلية غير موجودة');
+                }
+                // Atomic replace: copy proposal geometry onto the active zone.
+                $target->Z_Name = $zone->Z_Name;
+                $target->center_lat = $zone->center_lat;
+                $target->center_lng = $zone->center_lng;
+                $target->radius_meters = $zone->radius_meters;
+                $target->Z_Limit = $zone->radius_meters ?? $zone->Z_Limit;
+                $target->approval_status = 'approved';
+                $target->Z_state = 'active';
+                $target->activated_at = now();
+                $target->updated_at = now();
+                $target->save();
+
+                $zone->approval_status = 'approved';
+                $zone->Z_state = 'replaced';
+                $zone->activated_at = null;
+                $zone->updated_at = now();
+                $zone->save();
+
+                return response()->json([
+                    'status' => 'success',
+                    'message' => 'تمت الموافقة واستبدال هندسة المنطقة الآمنة',
+                    'data' => $this->serializeZone($target->fresh()),
+                    'proposal' => $this->serializeZone($zone->fresh()),
+                ]);
+            }
+
             $zone->approval_status = 'approved';
             $zone->Z_state = 'active';
             $zone->activated_at = now();
             $msg = 'تمت الموافقة على المنطقة وتفعيلها';
         } else {
+            // Reject keeps any replaced active zone untouched.
             $zone->approval_status = 'rejected';
             $zone->Z_state = 'rejected';
             $zone->activated_at = null;
@@ -621,6 +696,11 @@ class LocationController extends Controller
         $data['radius_meters'] = $zone->radius_meters ?? $zone->Z_Limit;
         $data['latitude'] = $zone->center_lat;
         $data['longitude'] = $zone->center_lng;
+        $data['replaces_zone_id'] = $zone->replaces_zone_id !== null
+            ? (int) $zone->replaces_zone_id
+            : null;
+        $data['is_proposal'] = $zone->replaces_zone_id !== null
+            || $zone->approval_status === 'pending';
         $data['is_active'] = in_array((string) $zone->Z_state, ['active', 'Active', 'نشط'], true)
             && $zone->approval_status === 'approved';
 

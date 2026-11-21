@@ -30,6 +30,7 @@ class SafeZone extends Model
         'Alert_ID',
         'Location_ID',
         'Zldery_ID',
+        'replaces_zone_id',
     ];
 
     public function elderly()

@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yusr1/core/geo/geofence_math.dart';
+import 'package:yusr1/core/location/location_alert_category.dart';
+import 'package:yusr1/core/location/location_freshness.dart';
 import 'package:yusr1/core/map/osm_tile_provider.dart';
 import 'package:yusr1/core/services/auth_service.dart';
 import 'package:yusr1/core/services/location_sharing_service.dart';
@@ -13,13 +15,89 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('P2.4 OsmTileProvider', () {
-    test('uses real OSM geographic tile URL (not a fake painter)', () {
-      expect(OsmTileProvider.urlTemplate, contains('openstreetmap.org'));
+    tearDown(() {
+      OsmTileProvider.overrideUrlTemplate = null;
+    });
+
+    test('uses legitimate OSM-derived tiles (not OSMF public CDN)', () {
       expect(OsmTileProvider.urlTemplate, contains('{z}'));
       expect(OsmTileProvider.urlTemplate, contains('{x}'));
       expect(OsmTileProvider.urlTemplate, contains('{y}'));
+      expect(OsmTileProvider.urlTemplate, isNot(contains('tile.openstreetmap.org')));
+      expect(OsmTileProvider.urlTemplate, contains('openstreetmap.fr'));
+      expect(OsmTileProvider.fallbackUrl, contains('cartocdn.com'));
       expect(OsmTileProvider.attributionText.toLowerCase(), contains('openstreetmap'));
+      expect(OsmTileProvider.httpUserAgent, contains('YusrMobile'));
       expect(OsmTileProvider.userAgentPackageName, isNotEmpty);
+      expect(
+        OsmTileProvider.tileLoadErrorArabic,
+        'تعذر تحميل الخريطة، تحقق من اتصال الإنترنت وحاول مرة أخرى',
+      );
+    });
+  });
+
+  group('P2.4 EXIT vs SOS categories', () {
+    test('safe_zone_exit is not SOS', () {
+      expect(
+        LocationAlertCategory.classify(
+          eventType: 'safe_zone_exit',
+          title: 'خروج من المنطقة الآمنة',
+          message: 'غادر كبير السن منطقة «المنزل».',
+        ),
+        LocationAlertCategory.zoneExit,
+      );
+      expect(
+        LocationAlertCategory.classify(
+          eventType: 'sos',
+          title: 'بلاغ طوارئ',
+          message: 'نداء استغاثة طارئ SOS',
+        ),
+        LocationAlertCategory.sos,
+      );
+      expect(
+        LocationAlertCategory.classify(
+          eventType: 'safe_zone_enter',
+          title: 'دخول إلى المنطقة',
+        ),
+        LocationAlertCategory.zoneEnter,
+      );
+    });
+  });
+
+  group('P2.4 LocationFreshness Arabic honesty', () {
+    test('never exposes English enum tokens in Arabic labels', () {
+      for (final code in [
+        LocationFreshness.fresh,
+        LocationFreshness.recent,
+        LocationFreshness.stale,
+        LocationFreshness.old,
+        LocationFreshness.unknown,
+        LocationFreshness.sharingStopped,
+        LocationFreshness.noData,
+        LocationFreshness.updateFailed,
+      ]) {
+        final ar = LocationFreshness.arabicLabel(code);
+        expect(ar, isNot(contains(code)));
+        expect(ar.toLowerCase(), isNot(contains('fresh')));
+        expect(ar.toLowerCase(), isNot(contains('stale')));
+        expect(ar, isNot(contains('live')));
+      }
+      expect(
+        LocationFreshness.arabicBannerTitle(LocationFreshness.fresh),
+        isNot(contains('مباشر')),
+      );
+      expect(
+        LocationFreshness.arabicBannerSubtitle(LocationFreshness.fresh),
+        isNot(contains('حي ومباشر')),
+      );
+    });
+
+    test('formats Arabic-readable timestamps (no raw ISO)', () {
+      final dt = DateTime(2026, 11, 21, 15, 23, 29);
+      final s = LocationFreshness.formatArabicDateTime(dt);
+      expect(s, isNot(contains('T')));
+      expect(s, contains('2026'));
+      expect(s, contains('15:23'));
     });
   });
 
@@ -144,6 +222,27 @@ void main() {
       await tester.pump();
       expect(find.textContaining('غير معروف'), findsOneWidget);
       expect(find.textContaining(OsmTileProvider.attributionText), findsOneWidget);
+    });
+
+    testWidgets('tile failure shows Arabic error and retry', (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: YusrMapView(
+              latitude: 15.3694,
+              longitude: 44.1910,
+              height: 220,
+              debugForceTilesFailed: true,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.text(OsmTileProvider.tileLoadErrorArabic), findsOneWidget);
+      expect(find.text('إعادة المحاولة'), findsOneWidget);
+      await tester.tap(find.text('إعادة المحاولة'));
+      await tester.pump();
+      expect(find.text(OsmTileProvider.tileLoadErrorArabic), findsNothing);
     });
   });
 

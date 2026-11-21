@@ -424,6 +424,76 @@ class P24LocationGeofencingTest extends TestCase
         $this->assertEquals(15.3694, (float) $cgOn->json('data.0.center_lat'));
     }
 
+    /** Material CG edit keeps approved active geometry until elderly approves. */
+    public function test_approved_zone_stays_active_while_cg_proposal_pending(): void
+    {
+        $elderly = $this->makeElderly('771041040');
+        $cg = $this->makeCaregiver('771041041', (int) $elderly->Eldery_ID);
+
+        $created = $this->asActor($elderly)->postJson('/api/location/safe-zones', [
+            'name' => 'المنزل',
+            'center_lat' => 15.3694,
+            'center_lng' => 44.1910,
+            'radius_meters' => 120,
+        ])->assertCreated();
+        $zoneId = (int) $created->json('data.Zone_ID');
+
+        $proposal = $this->asActor($cg)->postJson('/api/location/safe-zones/'.$zoneId, [
+            'Elderly_ID' => $elderly->Eldery_ID,
+            'name' => 'المنزل الموسّع',
+            'center_lat' => 15.3700,
+            'center_lng' => 44.1920,
+            'radius_meters' => 200,
+        ])->assertOk();
+
+        $proposalId = (int) $proposal->json('data.Zone_ID');
+        $this->assertNotSame($zoneId, $proposalId);
+        $this->assertSame('pending', $proposal->json('data.approval_status'));
+        $this->assertSame($zoneId, (int) $proposal->json('data.replaces_zone_id'));
+
+        $active = SafeZone::find($zoneId);
+        $this->assertSame('approved', $active->approval_status);
+        $this->assertSame('active', $active->Z_state);
+        $this->assertEquals(15.3694, (float) $active->center_lat);
+        $this->assertEquals(120, (int) $active->radius_meters);
+
+        // Reject keeps original geometry.
+        $this->asActor($elderly)->postJson(
+            '/api/location/safe-zones/'.$proposalId.'/reject'
+        )->assertOk();
+        $active->refresh();
+        $this->assertSame('approved', $active->approval_status);
+        $this->assertSame('active', $active->Z_state);
+        $this->assertEquals(15.3694, (float) $active->center_lat);
+
+        // New proposal then approve atomically replaces geometry.
+        $proposal2 = $this->asActor($cg)->postJson('/api/location/safe-zones/'.$zoneId, [
+            'Elderly_ID' => $elderly->Eldery_ID,
+            'name' => 'المنزل الجديد',
+            'center_lat' => 15.3711,
+            'center_lng' => 44.1933,
+            'radius_meters' => 180,
+        ])->assertOk();
+        $proposal2Id = (int) $proposal2->json('data.Zone_ID');
+        $this->asActor($elderly)->postJson(
+            '/api/location/safe-zones/'.$proposal2Id.'/approve'
+        )->assertOk();
+        $active->refresh();
+        $this->assertEquals(15.3711, (float) $active->center_lat);
+        $this->assertEquals(180, (int) $active->radius_meters);
+        $this->assertSame('approved', $active->approval_status);
+        $this->assertSame('active', $active->Z_state);
+
+        // Caregiver cannot self-approve.
+        $p3 = $this->asActor($cg)->postJson('/api/location/safe-zones/'.$zoneId, [
+            'Elderly_ID' => $elderly->Eldery_ID,
+            'radius_meters' => 220,
+        ])->assertOk();
+        $this->asActor($cg)->postJson(
+            '/api/location/safe-zones/'.((int) $p3->json('data.Zone_ID')).'/approve'
+        )->assertStatus(403);
+    }
+
     /** M-P24-1: elderly cannot list/mark safe_zone_* caregiver alerts. */
     public function test_elderly_isolated_from_safe_zone_notifications(): void
     {

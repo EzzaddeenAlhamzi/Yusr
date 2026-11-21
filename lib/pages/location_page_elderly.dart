@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../core/location/location_freshness.dart';
 import '../core/services/api_service.dart';
 import '../core/services/auth_service.dart';
 import '../core/services/location_sharing_service.dart';
@@ -477,7 +478,11 @@ class _LocationPageElderlyState extends State<LocationPageElderly> {
     final coords = (_lat != null && _lng != null)
         ? '${_lat!.toStringAsFixed(5)}, ${_lng!.toStringAsFixed(5)}'
         : 'غير معروف';
-    final time = _updatedAt?.toIso8601String() ?? '—';
+    final freshness = !_sharingEnabled
+        ? LocationFreshness.sharingStopped
+        : (_lat == null || _lng == null)
+            ? LocationFreshness.noData
+            : LocationFreshness.fromTimestamp(_updatedAt);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
@@ -497,6 +502,15 @@ class _LocationPageElderlyState extends State<LocationPageElderly> {
               textAlign: TextAlign.center,
               style: GoogleFonts.tajawal(fontSize: 16)),
           const SizedBox(height: 8),
+          Text(
+            LocationFreshness.arabicLabel(freshness),
+            textAlign: TextAlign.center,
+            style: GoogleFonts.tajawal(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: appbarColor,
+            ),
+          ),
           Text('الإحداثيات: $coords',
               style: GoogleFonts.tajawal(fontSize: 15, color: appbarColor)),
           Text(
@@ -505,7 +519,14 @@ class _LocationPageElderlyState extends State<LocationPageElderly> {
                 : 'الدقة: غير متوفرة (لم تُختلق)',
             style: GoogleFonts.tajawal(fontSize: 15),
           ),
-          Text('آخر تحديث: $time', style: GoogleFonts.tajawal(fontSize: 14)),
+          Text(
+            'آخر تحديث: ${LocationFreshness.formatArabicDateTime(_updatedAt)}',
+            style: GoogleFonts.tajawal(fontSize: 14),
+          ),
+          Text(
+            LocationFreshness.formatAge(_updatedAt),
+            style: GoogleFonts.tajawal(fontSize: 13, color: Colors.black54),
+          ),
         ],
       ),
     );

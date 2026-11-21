@@ -1,19 +1,56 @@
-/// P2.4 — configurable OpenStreetMap-based tile provider (no Google billing).
+import 'package:flutter_map/flutter_map.dart';
+
+/// P2.4 — geographic raster tiles for [YusrMapView].
 ///
-/// Follows OSM tile usage policy: identify User-Agent, no bulk download,
-/// attribution required on map UI.
+/// Does **not** use `tile.openstreetmap.org` (OSMF public CDN is not an app
+/// tile API; blocked responses are HTTP 200 blank PNGs — see
+/// `P2_4_REAL_MAP_ROOT_CAUSE.md`).
+///
+/// Primary: OpenStreetMap France community tiles (OSM data).
+/// Fallback: CARTO Voyager (OSM-derived; free raster, no API key).
 class OsmTileProvider {
   OsmTileProvider._();
 
-  /// Standard OSM raster tiles. Override in tests via [overrideUrlTemplate].
-  static String urlTemplate =
-      overrideUrlTemplate ?? 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+  /// Identifiable product UA (OSM / mirror courtesy).
+  static const String httpUserAgent =
+      'YusrMobile/1.0 (com.yusr.yusr1; Flutter; +https://github.com/EzzaddeenAlhamzi/Yusr)';
 
-  /// Package name used by flutter_map as User-Agent identity.
+  /// Package id retained for flutter_map diagnostics.
   static const String userAgentPackageName = 'com.yusr.yusr1';
 
-  static const String attributionText = '© OpenStreetMap contributors';
+  /// OpenStreetMap France — legitimate community mirror for app use.
+  static const String primaryUrlTemplate =
+      'https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png';
 
-  /// Test-only override (null in production).
+  /// CARTO Voyager — OSM-derived fallback (no billing key).
+  static const String fallbackUrlTemplate =
+      'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png';
+
+  static const List<String> subdomains = ['a', 'b', 'c'];
+
+  /// Test-only override (null in production). When set, primary+fallback use it.
   static String? overrideUrlTemplate;
+
+  static String get urlTemplate => overrideUrlTemplate ?? primaryUrlTemplate;
+
+  static String? get fallbackUrl =>
+      overrideUrlTemplate != null ? null : fallbackUrlTemplate;
+
+  static const String attributionText =
+      '© OpenStreetMap contributors · © CARTO';
+
+  /// Exact Arabic copy required by PO REAL MAP gate.
+  static const String tileLoadErrorArabic =
+      'تعذر تحميل الخريطة، تحقق من اتصال الإنترنت وحاول مرة أخرى';
+
+  /// Network provider with identifiable UA (mutable map — TileLayer may
+  /// putIfAbsent; const maps throw UnsupportedError).
+  static NetworkTileProvider createNetworkTileProvider() {
+    return NetworkTileProvider(
+      headers: <String, String>{
+        'User-Agent': httpUserAgent,
+      },
+      silenceExceptions: false,
+    );
+  }
 }

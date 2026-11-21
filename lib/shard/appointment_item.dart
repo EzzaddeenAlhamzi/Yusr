@@ -10,6 +10,10 @@ class AppointmentItem {
   final String? notes;
   final String? location;
   final Widget? iconWidget;
+  /// Device-local Lock K advance label (prefs); default 60m when unset.
+  final String? advanceReminder;
+  final DateTime? dateTime;
+  final bool isPast;
 
   AppointmentItem({
     String? id,
@@ -20,6 +24,9 @@ class AppointmentItem {
     this.notes,
     this.location,
     this.iconWidget,
+    this.advanceReminder,
+    this.dateTime,
+    this.isPast = false,
   }) : id = id ?? DateTime.now().millisecondsSinceEpoch.toString();
 
   factory AppointmentItem.fromMap(Map<String, dynamic> map) {
@@ -31,6 +38,9 @@ class AppointmentItem {
       date: map['date']?.toString(),
       notes: map['notes']?.toString(),
       location: map['location']?.toString(),
+      advanceReminder: map['advanceReminder']?.toString(),
+      dateTime: map['dateTime'] is DateTime ? map['dateTime'] as DateTime : null,
+      isPast: map['isPast'] == true,
     );
   }
 
@@ -51,6 +61,9 @@ class AppointmentItem {
     String? notes,
     String? location,
     Widget? iconWidget,
+    String? advanceReminder,
+    DateTime? dateTime,
+    bool? isPast,
   }) {
     return AppointmentItem(
       id: id ?? this.id,
@@ -61,6 +74,9 @@ class AppointmentItem {
       notes: notes ?? this.notes,
       location: location ?? this.location,
       iconWidget: iconWidget ?? this.iconWidget,
+      advanceReminder: advanceReminder ?? this.advanceReminder,
+      dateTime: dateTime ?? this.dateTime,
+      isPast: isPast ?? this.isPast,
     );
   }
 }

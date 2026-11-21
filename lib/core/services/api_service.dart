@@ -1007,6 +1007,15 @@ class ApiService {
     });
   }
 
+  /// P2.3 — mark notification read (legacy + REST bridge).
+  Future<Map<String, dynamic>> markNotificationRead(int notificationId) async {
+    return _sendRequest({
+      'action': 'mark_notification_read',
+      'Notifications_ID': notificationId,
+      'id': notificationId,
+    });
+  }
+
   // ==================== سجلات الطوارئ والاستغاثة (emergency_log) ====================
 
   /// جلب سجلات الطوارئ لكبير السن من قاعدة البيانات

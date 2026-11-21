@@ -280,11 +280,12 @@ class MedicationAdherenceService
                     'M_RepatTime' => $med->M_RepatTime,
                     'Elderly_ID' => $med->Elderly_ID,
                 ] : null,
-                // P2.3 notification timing contract (no scheduler in P2.2)
+                // P2.3 Channel B contract — caregiver in-app after grace (no FCM).
                 'notification_contract' => [
-                    'deferred_to' => 'P2.3',
+                    'channel' => 'caregiver_in_app',
                     'candidate_trigger' => 'grace_elapsed_unconfirmed',
                     'notify_role' => 'linked_caregiver',
+                    'fcm' => 'deferred',
                     'payload_keys' => [
                         'Elderly_ID',
                         'Medicayion_ID',

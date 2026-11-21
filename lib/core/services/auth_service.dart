@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'local_notification_service.dart';
 import 'senior_manager.dart';
 import 'token_storage.dart';
 
@@ -163,7 +164,8 @@ class AuthService extends ChangeNotifier {
             key == 'senior_location_allowed' ||
             key == 'senior_notifications_allowed' ||
             key.startsWith('med_') ||
-            key.startsWith('appt_')) {
+            key.startsWith('appt_') ||
+            key.startsWith('quiet_hours_')) {
           await prefs.remove(key);
           continue;
         }
@@ -181,6 +183,11 @@ class AuthService extends ChangeNotifier {
   }
 
   /// Call before applying a new login when a different in-memory user exists.
+  ///
+  /// M-3 / Lock I: when switching accounts, cancel the *previous* account's
+  /// scheduled local OS notifications before clearing session. Does not run
+  /// [LocalNotificationService.cancelAll] for same-user re-entry (no schedules
+  /// of a new account exist yet at this point).
   Future<void> prepareForUserSwitch({
     required String newRole,
     required int newUserId,
@@ -189,6 +196,9 @@ class AuthService extends ChangeNotifier {
     final switching = _isLoggedIn &&
         (_role != normalized || _userId != newUserId);
     if (switching) {
+      try {
+        await LocalNotificationService.instance.cancelAll();
+      } catch (_) {}
       await clearUserScopedCaches(includePerUserModeKeys: true);
       SeniorManager().clear();
       clearSessionLocal();
@@ -323,6 +333,7 @@ class AuthService extends ChangeNotifier {
 
   /// تسجيل الخروج: إبطال التوكن (إن أمكن) + مسح التخزين الآمن + الجلسة + الكاش.
   /// لا يدّعي إبطال الخادم عند فشل الشبكة؛ يمنع الوصول المحلي دائماً.
+  /// P2.3: also cancels all local OS notification schedules (Lock I).
   Future<LogoutResult> logout() async {
     var serverRevoked = false;
     try {
@@ -333,6 +344,9 @@ class AuthService extends ChangeNotifier {
     } catch (_) {
       serverRevoked = false;
     }
+    try {
+      await LocalNotificationService.instance.cancelAll();
+    } catch (_) {}
     await TokenStorage.instance.clear();
     await clearUserScopedCaches();
     clearSessionLocal();

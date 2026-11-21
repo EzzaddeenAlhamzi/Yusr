@@ -43,3 +43,4 @@ temp/
 .phpunit.result.cache
 /bootstrap/cache/*.php
 !/bootstrap/cache/.gitignore
+composer.phar

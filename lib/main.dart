@@ -3,6 +3,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'core/constants/app_theme.dart';
 import 'core/services/api_service.dart';
+import 'core/services/local_notification_service.dart';
 import 'core/widgets/auth_route_guard.dart';
 import 'core/widgets/session_bootstrap_page.dart';
 import 'pages/welcome_page.dart';
@@ -48,6 +49,7 @@ import 'pages/devices_page_elderly.dart';
 import 'pages/ai_page.dart';
 import 'pages/senior_help_page.dart';
 import 'pages/senior_notifications_page.dart';
+import 'pages/elderly_notification_settings_page.dart';
 import 'pages/senior_link_code_page.dart';
 import 'pages/senior_link_success_page.dart';
 import 'pages/senior_location_page.dart';
@@ -62,6 +64,19 @@ void main() async {
 
   ApiService.instance.ensureAuthHooksForSession();
   ApiService.onUnauthorized = _handleUnauthorized;
+
+  // P2.3 Channel A — init local notification plugin (no FCM).
+  try {
+    await LocalNotificationService.instance.initialize(
+      onNavigate: (route, payload) {
+        final nav = yusrNavigatorKey.currentState;
+        if (nav == null) return;
+        nav.pushNamed(route, arguments: payload);
+      },
+    );
+  } catch (_) {
+    // Plugin may be unavailable on unsupported platforms; app still runs.
+  }
 
   // ─── فحص الاتصال بقاعدة البيانات عند بدء التطبيق (Health Check) ───
   _runStartupHealthCheck();
@@ -240,6 +255,8 @@ class YusrApp extends StatelessWidget {
         '/senior-help': (context) => _senior(const SeniorHelpPage()),
         '/senior-notifications': (context) =>
             _senior(const SeniorNotificationsPage()),
+        '/elderly-notification-settings': (context) =>
+            _senior(const ElderlyNotificationSettingsPage()),
         '/senior-link-code': (context) => _senior(const SeniorLinkCodePage()),
         '/senior-link-success': (context) =>
             _senior(const SeniorLinkSuccessPage()),

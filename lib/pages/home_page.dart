@@ -4,10 +4,13 @@ import 'package:google_fonts/google_fonts.dart';
 // استدعاء ملفات الـ shard بناءً على هيكلية المشروع
 import '../shard/color.dart';
 import '../core/widgets/elderly_bottom_nav_bar.dart';
+import '../core/widgets/quiet_hours_prefs_section.dart';
 import '../core/services/api_service.dart';
 import '../core/services/auth_service.dart';
+import '../core/services/local_notification_ids.dart';
 import 'ai_page.dart';
 import 'dates.dart';
+import 'elderly_notification_settings_page.dart';
 import 'emergency_page_elderly.dart';
 import 'health_page.dart';
 import 'medicines_page_elderly.dart';
@@ -49,176 +52,232 @@ class HomePage extends StatelessWidget {
       context: context,
       builder: (ctx) => Dialog(
         backgroundColor: cardColor,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 22, vertical: 24),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(26),
           side: const BorderSide(color: cardBorderColor, width: 1.5),
         ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 26),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 76,
-                height: 76,
-                decoration: BoxDecoration(
-                  color: appbarColor.withValues(alpha: 0.12),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.notifications_active_rounded,
-                  color: appbarColor,
-                  size: 42,
-                ),
-              ),
-              const SizedBox(height: 18),
-              Text(
-                'الإشعارات',
-                textAlign: TextAlign.center,
-                style: GoogleFonts.tajawal(
-                  color: appbarColor,
-                  fontSize: 26,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 16),
-              if (fetchError != null) ...[
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 18,
-                    vertical: 22,
+        child: Directionality(
+          textDirection: TextDirection.rtl,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(ctx).height * 0.82,
+            ),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 76,
+                    height: 76,
+                    decoration: BoxDecoration(
+                      color: appbarColor.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.notifications_active_rounded,
+                      color: appbarColor,
+                      size: 42,
+                    ),
                   ),
-                  decoration: BoxDecoration(
-                    color: backgroundColor,
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: cardBorderColor, width: 1),
-                  ),
-                  child: Text(
-                    fetchError,
+                  const SizedBox(height: 16),
+                  Text(
+                    'الإشعارات',
                     textAlign: TextAlign.center,
                     style: GoogleFonts.tajawal(
-                      color: Colors.red.shade800,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ] else if (notifications.isEmpty) ...[
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 18,
-                    vertical: 22,
-                  ),
-                  decoration: BoxDecoration(
-                    color: backgroundColor,
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: cardBorderColor, width: 1),
-                  ),
-                  child: Column(
-                    children: [
-                      Icon(
-                        Icons.notifications_off_outlined,
-                        size: 46,
-                        color: Colors.grey[500],
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        'لا توجد إشعارات حالياً',
-                        textAlign: TextAlign.center,
-                        style: GoogleFonts.tajawal(
-                          color: Colors.black87,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'سيتم تنبيهك هنا عند وجود أي تذكير بموعد أو دواء',
-                        textAlign: TextAlign.center,
-                        style: GoogleFonts.tajawal(
-                          color: Colors.black54,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ] else ...[
-                Flexible(
-                  child: ListView.separated(
-                    shrinkWrap: true,
-                    itemCount: notifications.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 10),
-                    itemBuilder: (context, index) {
-                      final notif = notifications[index];
-                      final text = (notif['N_Title'] ??
-                              notif['N_Message'] ??
-                              notif['text'] ??
-                              '')
-                          .toString();
-                      return Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 12,
-                        ),
-                        decoration: BoxDecoration(
-                          color: backgroundColor,
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: cardBorderColor),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(
-                              Icons.circle,
-                              size: 10,
-                              color: appbarColor,
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                text,
-                                style: GoogleFonts.tajawal(
-                                  fontSize: 17,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.black87,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ],
-              const SizedBox(height: 22),
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: appbarColor,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                  ),
-                  onPressed: () => Navigator.pop(ctx),
-                  child: Text(
-                    'حسناً',
-                    style: GoogleFonts.tajawal(
-                      color: Colors.white,
-                      fontSize: 22,
+                      color: appbarColor,
+                      fontSize: 26,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                ),
+                  const SizedBox(height: 8),
+                  Text(
+                    QuietHoursPolicy.arabicMedExceptionCopy,
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.cairo(
+                      color: const Color(0xFF267364),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      height: 1.35,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  QuietHoursPrefsSection(
+                    compact: true,
+                    primaryColor: appbarColor,
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: appbarColor, width: 1.5),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                const ElderlyNotificationSettingsPage(),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.settings_rounded,
+                          color: appbarColor),
+                      label: Text(
+                        'إعدادات التنبيهات وساعات الهدوء',
+                        style: GoogleFonts.cairo(
+                          color: appbarColor,
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  if (fetchError != null) ...[
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 22,
+                      ),
+                      decoration: BoxDecoration(
+                        color: backgroundColor,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: cardBorderColor, width: 1),
+                      ),
+                      child: Text(
+                        fetchError,
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.tajawal(
+                          color: Colors.red.shade800,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ] else if (notifications.isEmpty) ...[
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 22,
+                      ),
+                      decoration: BoxDecoration(
+                        color: backgroundColor,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: cardBorderColor, width: 1),
+                      ),
+                      child: Column(
+                        children: [
+                          Icon(
+                            Icons.notifications_off_outlined,
+                            size: 46,
+                            color: Colors.grey[500],
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            'لا توجد إشعارات حالياً',
+                            textAlign: TextAlign.center,
+                            style: GoogleFonts.tajawal(
+                              color: Colors.black87,
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'سيتم تنبيهك هنا عند وجود أي تذكير بموعد أو دواء',
+                            textAlign: TextAlign.center,
+                            style: GoogleFonts.tajawal(
+                              color: Colors.black54,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ] else ...[
+                    ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: notifications.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 10),
+                      itemBuilder: (context, index) {
+                        final notif = notifications[index];
+                        final text = (notif['N_Title'] ??
+                                notif['N_Message'] ??
+                                notif['text'] ??
+                                '')
+                            .toString();
+                        return Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 12,
+                          ),
+                          decoration: BoxDecoration(
+                            color: backgroundColor,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: cardBorderColor),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(
+                                Icons.circle,
+                                size: 10,
+                                color: appbarColor,
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  text,
+                                  style: GoogleFonts.tajawal(
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                  const SizedBox(height: 22),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: appbarColor,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      onPressed: () => Navigator.pop(ctx),
+                      child: Text(
+                        'حسناً',
+                        style: GoogleFonts.tajawal(
+                          color: Colors.white,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),

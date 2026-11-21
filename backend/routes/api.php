@@ -100,9 +100,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/location/history', [LocationController::class, 'history']);
     Route::get('/location/safe-zones', [LocationController::class, 'getSafeZones']);
 
-    // الإشعارات
+    // الإشعارات (P2.3: list + create + mark-read; no FCM)
     Route::get('/notifications', [NotificationController::class, 'index']);
     Route::post('/notifications', [NotificationController::class, 'store']);
+    Route::match(['patch', 'post'], '/notifications/{id}/read', [NotificationController::class, 'markRead']);
+    Route::post('/notifications/mark-read', [NotificationController::class, 'markRead']);
 
     // الخدمات وأنواع الرعاية
     Route::get('/services', [ServiceController::class, 'getServices']);

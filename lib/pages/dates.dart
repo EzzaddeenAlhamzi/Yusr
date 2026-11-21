@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../shard/color.dart';
 import '../shard/custom_header.dart';
 import '../shard/appointment_item.dart';
 import '../core/services/api_service.dart';
 import '../core/services/auth_service.dart';
+import '../core/services/local_notification_ids.dart';
+import '../core/services/local_notification_service.dart';
 import '../core/services/senior_manager.dart';
+import '../core/widgets/appointment_advance_reminder_line.dart';
 import 'ai_page.dart';
 import 'past_dates.dart';
 import 'add_date.dart';
@@ -21,8 +25,17 @@ class DatesScreen extends StatefulWidget {
 typedef AppointmentsScreen = DatesScreen;
 
 class _DatesScreenState extends State<DatesScreen> {
+  static const List<String> _advanceOptions = [
+    'بدون تذكير مسبق',
+    'قبل الموعد بـ 15 دقيقة',
+    'قبل الموعد بـ 30 دقيقة',
+    'قبل الموعد بساعة',
+    'قبل الموعد بيوم واحد',
+  ];
+
   List<AppointmentItem> _appointments = [];
   bool _isLoading = true;
+  bool _permissionHintShown = false;
 
   @override
   void initState() {
@@ -30,12 +43,16 @@ class _DatesScreenState extends State<DatesScreen> {
     _loadAppointments();
   }
 
+  /// Elderly-only scheduling uses the signed-in senior id (authorized own appts).
+  int? get _ownElderlyId {
+    if (AuthService().isSenior) return AuthService().userId;
+    return int.tryParse(SeniorManager().currentSenior.id);
+  }
+
   Future<void> _loadAppointments() async {
     setState(() => _isLoading = true);
     try {
-      final int? seniorId = AuthService().isSenior
-          ? AuthService().userId
-          : int.tryParse(SeniorManager().currentSenior.id);
+      final int? seniorId = _ownElderlyId;
 
       final list = await ApiService.instance.getAppointments(elderlyId: seniorId);
       if (list.isEmpty && ApiService.lastListError != null && mounted) {
@@ -50,24 +67,68 @@ class _DatesScreenState extends State<DatesScreen> {
           ),
         );
       }
+      final prefs = await SharedPreferences.getInstance();
+      final now = DateTime.now();
       final items = <AppointmentItem>[];
+      final syncRows = <Map<String, dynamic>>[];
       for (final a in list) {
+        final idRaw = a['Appointment_ID'];
+        final id = idRaw is int
+            ? idRaw
+            : int.tryParse(idRaw?.toString() ?? '');
+        final dateStr = (a['A_Date'] ?? '').toString();
         final timeRaw = (a['A_Time'] ?? 'غير محدد').toString();
-        final timeFormatted = timeRaw.length >= 5 ? timeRaw.substring(0, 5) : timeRaw;
+        final timeFormatted =
+            timeRaw.length >= 5 ? timeRaw.substring(0, 5) : timeRaw;
+        final remKey = seniorId != null && id != null
+            ? 'appt_advance_rem_${seniorId}_$id'
+            : null;
+        final advanceReminder = remKey == null
+            ? AppointmentReminderOffset.defaultLabel
+            : (prefs.getString(remKey) ??
+                AppointmentReminderOffset.defaultLabel);
+
+        DateTime? apptDateTime;
+        final cleanDate = dateStr.split('T').first.trim();
+        final cleanTime = timeRaw.trim();
+        apptDateTime = DateTime.tryParse('$cleanDate $cleanTime');
+        if (apptDateTime == null && cleanDate.isNotEmpty) {
+          apptDateTime = DateTime.tryParse(cleanDate);
+        }
+        final isPast =
+            apptDateTime != null ? now.isAfter(apptDateTime) : false;
+
         items.add(AppointmentItem(
-          id: a['Appointment_ID']?.toString(),
+          id: id?.toString() ?? idRaw?.toString(),
           title: a['A_DateType'] ?? 'موعد',
           day: a['A_Date'] ?? 'قريباً',
           time: timeFormatted,
           date: a['A_Date']?.toString(),
           notes: a['A_Note']?.toString(),
           location: a['A_Location']?.toString(),
+          advanceReminder: advanceReminder,
+          dateTime: apptDateTime,
+          isPast: isPast,
         ));
+        if (id != null && apptDateTime != null) {
+          syncRows.add({
+            'id': id,
+            'title': a['A_DateType'] ?? 'موعد',
+            'dateTime': apptDateTime,
+            'advanceReminder': advanceReminder,
+            'isCancelled': false,
+            'isPast': isPast,
+          });
+        }
       }
       if (mounted) {
         setState(() {
           _appointments = items;
         });
+      }
+      // Channel A on the elderly handset — device-local; not CG device sync.
+      if (AuthService().isSenior && seniorId != null) {
+        await _syncElderlyAppointmentReminders(seniorId, syncRows);
       }
     } catch (_) {
       if (mounted) {
@@ -85,6 +146,49 @@ class _DatesScreenState extends State<DatesScreen> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  /// Schedule/cancel Lock K reminders on this elderly Android device only.
+  Future<void> _syncElderlyAppointmentReminders(
+    int elderlyId,
+    List<Map<String, dynamic>> items,
+  ) async {
+    try {
+      await LocalNotificationService.instance.initialize();
+      final quiet =
+          await LocalNotificationService.instance.loadQuietHours(elderlyId);
+      final needsSchedule = items.any((item) {
+        final offset = AppointmentReminderOffset.minutesFromLabel(
+          item['advanceReminder']?.toString(),
+        );
+        return item['isPast'] != true &&
+            item['isCancelled'] != true &&
+            offset > 0;
+      });
+      if (needsSchedule) {
+        final granted =
+            await LocalNotificationService.instance.isPermissionGranted();
+        if (!granted && mounted && !_permissionHintShown) {
+          _permissionHintShown = true;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'لم يُمنح إذن الإشعارات. لن تُجدول تذكيرات المواعيد على هذا الجهاز حتى تفعّلها من الإعدادات.',
+                style: GoogleFonts.tajawal(fontSize: 15),
+              ),
+              backgroundColor: const Color(0xFFE65100),
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
+      }
+      await LocalNotificationService.instance.syncAppointmentReminders(
+        elderlyId: elderlyId,
+        items: items,
+        quiet: quiet,
+        navRoute: '/dates',
+      );
+    } catch (_) {}
   }
 
   // الانتقال لصفحة إضافة موعد جديد
@@ -164,8 +268,9 @@ class _DatesScreenState extends State<DatesScreen> {
                 return;
               }
               try {
-                final res = await ApiService.instance
-                    .deleteAppointment(int.parse(item.id));
+                final parsedId = int.parse(item.id);
+                final res =
+                    await ApiService.instance.deleteAppointment(parsedId);
                 if (!mounted) return;
                 if (res['status'] != 'success') {
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -179,6 +284,15 @@ class _DatesScreenState extends State<DatesScreen> {
                   );
                   return;
                 }
+                final elderlyId = _ownElderlyId;
+                if (AuthService().isSenior && elderlyId != null) {
+                  await LocalNotificationService.instance
+                      .cancelAppointmentReminder(
+                    elderlyId: elderlyId,
+                    appointmentId: parsedId,
+                  );
+                }
+                if (!mounted) return;
                 setState(() {
                   _appointments.removeAt(index);
                 });
@@ -257,6 +371,11 @@ class _DatesScreenState extends State<DatesScreen> {
     // Shown inside the dialog so invalid-date feedback stays visible above the
     // modal (page SnackBar alone can sit behind the barrier / IME).
     var dateError = '';
+    var selectedAdvance =
+        item.advanceReminder ?? AppointmentReminderOffset.defaultLabel;
+    if (!_advanceOptions.contains(selectedAdvance)) {
+      selectedAdvance = AppointmentReminderOffset.defaultLabel;
+    }
 
     showDialog(
       context: context,
@@ -461,6 +580,50 @@ class _DatesScreenState extends State<DatesScreen> {
                         ),
                       ),
                     ),
+                    const SizedBox(height: 16),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        'ضبط تذكير مسبق (على هذا الجهاز فقط):',
+                        style: GoogleFonts.tajawal(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: appbarColor,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      initialValue: selectedAdvance,
+                      decoration: InputDecoration(
+                        filled: true,
+                        fillColor: backgroundColor,
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 10),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: const BorderSide(color: cardBorderColor),
+                        ),
+                      ),
+                      items: _advanceOptions
+                          .map(
+                            (opt) => DropdownMenuItem(
+                              value: opt,
+                              child: Text(
+                                opt,
+                                style: GoogleFonts.tajawal(fontSize: 16),
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: isSaving
+                          ? null
+                          : (v) {
+                              if (v != null) {
+                                setDialogState(() => selectedAdvance = v);
+                              }
+                            },
+                    ),
                     if (isSaving) ...[
                       const SizedBox(height: 16),
                       const CircularProgressIndicator(),
@@ -588,6 +751,16 @@ class _DatesScreenState extends State<DatesScreen> {
                           return;
                         }
 
+                        // Device-local offset prefs (not server-persisted).
+                        final elderlyId = _ownElderlyId;
+                        if (elderlyId != null) {
+                          final prefs = await SharedPreferences.getInstance();
+                          await prefs.setString(
+                            'appt_advance_rem_${elderlyId}_$appointmentId',
+                            selectedAdvance,
+                          );
+                        }
+
                         if (ctx.mounted) Navigator.pop(ctx);
                         pageMessenger.showSnackBar(
                           SnackBar(
@@ -598,6 +771,7 @@ class _DatesScreenState extends State<DatesScreen> {
                             backgroundColor: Colors.green.shade700,
                           ),
                         );
+                        // Reload reconciles local schedules (edit/offset/disable).
                         if (mounted) await _loadAppointments();
                       },
                 child: Text(
@@ -914,6 +1088,15 @@ class _DatesScreenState extends State<DatesScreen> {
                     ),
                   ],
                 ),
+                if (AppointmentAdvanceReminderLine.shouldShow(
+                    item.advanceReminder)) ...[
+                  const SizedBox(height: 6),
+                  AppointmentAdvanceReminderLine(
+                    advanceReminder: item.advanceReminder!,
+                    fontSize: 15,
+                    iconSize: 18,
+                  ),
+                ],
               ],
             ),
           ),

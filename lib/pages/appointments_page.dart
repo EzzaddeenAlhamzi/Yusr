@@ -3,9 +3,12 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../core/constants/app_colors.dart';
+import '../core/widgets/appointment_advance_reminder_line.dart';
 import '../core/widgets/custom_app_bar.dart';
 import '../core/widgets/senior_selector_widget.dart';
 import '../core/services/api_service.dart';
+import '../core/services/auth_service.dart';
+import '../core/services/local_notification_service.dart';
 import '../core/services/senior_manager.dart';
 
 class AppointmentsPage extends StatefulWidget {
@@ -130,6 +133,9 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
         setState(() {
           _allAppointments = loaded;
         });
+        if (seniorId != null) {
+          await _syncLocalAppointmentReminders(seniorId, loaded);
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -147,6 +153,24 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  /// P2.3 Lock K — local appointment reminders on this caregiver device
+  /// (default offset 60m). Device-local prefs; not the elderly handset.
+  Future<void> _syncLocalAppointmentReminders(
+    int seniorId,
+    List<Map<String, dynamic>> items,
+  ) async {
+    try {
+      final uid = AuthService().userId ?? seniorId;
+      final quiet = await LocalNotificationService.instance.loadQuietHours(uid);
+      await LocalNotificationService.instance.syncAppointmentReminders(
+        elderlyId: seniorId,
+        items: items,
+        quiet: quiet,
+        navRoute: '/appointments',
+      );
+    } catch (_) {}
   }
 
   /// True only for real calendar dates (rejects `2026-13-40`).
@@ -698,38 +722,30 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                     ),
                     const SizedBox(height: 2),
                     Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Icon(Icons.calendar_today_rounded,
                             size: 13, color: AppColors.mainColor),
                         const SizedBox(width: 4),
-                        Text(
-                          '${item['date']}  الساعة ${item['time']}',
-                          style: GoogleFonts.cairo(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.mainColor,
+                        Flexible(
+                          child: Text(
+                            '${item['date']}  الساعة ${item['time']}',
+                            softWrap: true,
+                            style: GoogleFonts.cairo(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.mainColor,
+                            ),
                           ),
                         ),
                       ],
                     ),
-                    if (advanceReminder.isNotEmpty &&
-                        advanceReminder != 'بدون تذكير مسبق' &&
+                    if (AppointmentAdvanceReminderLine.shouldShow(
+                            advanceReminder) &&
                         !isCancelled) ...[
                       const SizedBox(height: 2),
-                      Row(
-                        children: [
-                          const Icon(Icons.alarm_on_rounded,
-                              size: 13, color: Color(0xFFE65100)),
-                          const SizedBox(width: 4),
-                          Text(
-                            'تذكير مسبق: $advanceReminder',
-                            style: GoogleFonts.cairo(
-                              fontSize: 11,
-                              color: const Color(0xFFE65100),
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
+                      AppointmentAdvanceReminderLine(
+                        advanceReminder: advanceReminder,
                       ),
                     ],
                     if ((item['doctor'] as String).isNotEmpty) ...[
@@ -1676,10 +1692,11 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                   );
                   return;
                 }
+                final parsedId = appointmentId is int
+                    ? appointmentId
+                    : int.parse(appointmentId.toString());
                 final res = await ApiService.instance.deleteAppointment(
-                  appointmentId is int
-                      ? appointmentId
-                      : int.parse(appointmentId.toString()),
+                  parsedId,
                 );
                 if (!context.mounted) return;
                 if (res['status'] != 'success') {
@@ -1693,6 +1710,16 @@ class _AppointmentsPageState extends State<AppointmentsPage> {
                     ),
                   );
                   return;
+                }
+                // Cancel stable + legacy local reminders for this appointment.
+                final senior = SeniorManager().currentSenior;
+                final int? seniorId = int.tryParse(senior.id);
+                if (seniorId != null) {
+                  await LocalNotificationService.instance
+                      .cancelAppointmentReminder(
+                    elderlyId: seniorId,
+                    appointmentId: parsedId,
+                  );
                 }
                 await _loadAppointments();
               },

@@ -147,7 +147,7 @@ class _SimpleMedicinesPageState extends State<SimpleMedicinesPage> {
         return;
       }
       final occKey = dose['occurrence_key']?.toString();
-      final eid = int.tryParse(SeniorManager().currentSenior?.id ?? '');
+      final eid = int.tryParse(SeniorManager().currentSenior.id);
       if (occKey != null && eid != null) {
         try {
           await LocalNotificationService.instance.cancelMedicationOccurrence(
@@ -156,6 +156,7 @@ class _SimpleMedicinesPageState extends State<SimpleMedicinesPage> {
           );
         } catch (_) {}
       }
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(

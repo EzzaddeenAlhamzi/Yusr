@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yusr1/core/services/local_notification_ids.dart';
 
@@ -48,6 +50,41 @@ void main() {
         endHm: '07:00',
       );
       expect(q.shouldSuppressAppointment(DateTime(2026, 11, 20, 23, 0)), isFalse);
+    });
+  });
+
+  group('P2.3 quiet hours prefs UI reachable (s08)', () {
+    test('home bell embeds quiet hours toggle + Lock G copy', () {
+      final home = File('lib/pages/home_page.dart').readAsStringSync();
+      expect(home.contains('QuietHoursPrefsSection'), isTrue);
+      expect(home.contains('QuietHoursPolicy.arabicMedExceptionCopy'), isTrue);
+      expect(home.contains('إعدادات التنبيهات وساعات الهدوء'), isTrue);
+      expect(home.contains('ElderlyNotificationSettingsPage'), isTrue);
+    });
+
+    test('settings page + prefs section persist quiet hours keys', () {
+      final page =
+          File('lib/pages/elderly_notification_settings_page.dart')
+              .readAsStringSync();
+      final section =
+          File('lib/core/widgets/quiet_hours_prefs_section.dart')
+              .readAsStringSync();
+      final svc =
+          File('lib/core/services/local_notification_service.dart')
+              .readAsStringSync();
+      expect(page.contains('QuietHoursPrefsSection'), isTrue);
+      expect(page.contains('ساعات الهدوء'), isTrue);
+      expect(section.contains('saveQuietHours'), isTrue);
+      expect(section.contains('QuietHoursPolicy.arabicMedExceptionCopy'), isTrue);
+      expect(svc.contains('Future<void> saveQuietHours'), isTrue);
+      expect(svc.contains('quiet_hours_enabled_'), isTrue);
+      // Lock G: med suppress always false — never silently discard meds.
+      expect(
+        File('lib/core/services/local_notification_ids.dart')
+            .readAsStringSync()
+            .contains('shouldSuppressMedication(DateTime scheduledLocal) => false'),
+        isTrue,
+      );
     });
   });
 

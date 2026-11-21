@@ -111,6 +111,14 @@ class LocalNotificationService {
     );
   }
 
+  /// Persist quiet-hours prefs. Medication reminders are never suppressed (Lock G).
+  Future<void> saveQuietHours(int userId, QuietHoursPolicy policy) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('quiet_hours_enabled_$userId', policy.enabled);
+    await prefs.setString('quiet_hours_start_$userId', policy.startHm);
+    await prefs.setString('quiet_hours_end_$userId', policy.endHm);
+  }
+
   Future<void> cancelAll() async {
     if (!_initialized) return;
     await _plugin.cancelAll();

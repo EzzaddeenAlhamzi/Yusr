@@ -222,6 +222,7 @@ class _MedicinesPageElderlyState extends State<MedicinesPageElderly> {
           );
         } catch (_) {}
       }
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
